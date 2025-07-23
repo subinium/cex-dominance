@@ -1,0 +1,311 @@
+import streamlit as st
+import pandas as pd
+import plotly.graph_objs as go
+from datetime import datetime, timedelta
+from plotly.subplots import make_subplots
+
+from main import ExchangeVolumeAnalyzer
+
+st.set_page_config(page_title="Exchange Dominance Dashboard", layout="wide")
+st.title("Exchange Dominance & Price Dashboard")
+
+# Ticker input
+ticker = st.text_input("Enter token ticker (e.g., SOL, PENGU):", value="PENGU")
+# Period input
+days = st.number_input("Select period (days)", min_value=2,
+                       max_value=60, value=14, step=1)
+
+if ticker:
+    analyzer = ExchangeVolumeAnalyzer()
+    with st.spinner(f"Fetching data for {ticker} ({days} days)..."):
+        historical_df = analyzer.fetch_historical_data(ticker, int(days))
+
+    if not historical_df.empty:
+        # Dominance (market share) calculation
+        share_df = analyzer.calculate_daily_market_share(historical_df)
+        dominance_pivot = share_df.pivot(
+            index='date', columns='exchange', values='market_share_pct').fillna(0)
+        volume_pivot = historical_df.pivot(
+            index='date', columns='exchange', values='volume_usd').fillna(0)
+        # Prepare price_df and OHLC for candlestick (binance preferred, else first exchange)
+        if 'close' in historical_df.columns:
+            if 'binance' in historical_df['exchange'].unique():
+                price_df = historical_df[historical_df['exchange'] == 'binance'][[
+                    'date', 'close']].drop_duplicates(subset=['date']).set_index('date')
+            else:
+                price_df = historical_df.groupby(
+                    'date')['close'].first().to_frame()
+            price_df = price_df.sort_index()
+        else:
+            price_df = pd.DataFrame(columns=['close'])
+
+        if all(col in historical_df.columns for col in ['open', 'high', 'low', 'close']):
+            if 'binance' in historical_df['exchange'].unique():
+                ohlc_df = historical_df[historical_df['exchange'] == 'binance'][[
+                    'date', 'open', 'high', 'low', 'close']].drop_duplicates(subset=['date']).set_index('date')
+            else:
+                ohlc_df = historical_df.groupby('date').first()[
+                    ['open', 'high', 'low', 'close']]
+            ohlc_df = ohlc_df.sort_index()
+        else:
+            ohlc_df = None
+
+        krw_exchanges = ['upbit', 'bithumb']
+        exchange_colors = {
+            'binance': '#F3BA2F',
+            'coinbase': '#0052FF',
+            'upbit': '#1C64F2',
+            'bithumb': '#FF5C5C',
+            'kraken': '#5546FF',
+            'okx': '#8B4513',
+            'bybit': '#F9D326',
+            'kucoin': '#28C893',
+        }
+
+        # KRW vs Non-KRW 거래소 분류
+        krw_exchanges = ['upbit', 'bithumb']
+        non_krw_exchanges = ['binance', 'bybit',
+                             'okx', 'kucoin', 'coinbase', 'kraken']
+
+        # Perp 거래소 리스트 정의 (main.py에서 _perp 접미사 사용)
+        major_exchanges = ['binance', 'bybit', 'okx',
+                           'kucoin', 'coinbase', 'kraken', 'upbit', 'bithumb']
+        perp_exchanges = [f"{ex}_perp" for ex in major_exchanges]
+
+        # Spot Only / Spot+Perp 선택
+        volume_mode = st.radio(
+            "Volume Mode", ["Spot Only", "Spot+Perp"], index=0)
+
+        # 선택에 따라 컬럼 필터링 및 데이터 처리
+        if volume_mode == "Spot Only":
+            # Spot Only 모드: perp 거래소 제외하고 spot만 사용
+            filtered_columns = dominance_pivot.columns.difference(
+                perp_exchanges)
+
+            # KR/Non-KR 그룹화 (spot만)
+            krw_cols = [col for col in filtered_columns if any(
+                ex in col for ex in krw_exchanges)]
+            non_krw_cols = [col for col in filtered_columns if any(
+                ex in col for ex in non_krw_exchanges)]
+
+            # Spot Only용 피벗 테이블 생성
+            spot_dominance_pivot = dominance_pivot[filtered_columns]
+            spot_volume_pivot = volume_pivot[filtered_columns]
+
+            # 각 날짜별로 100%로 정규화
+            spot_dominance_pivot = spot_dominance_pivot.div(
+                spot_dominance_pivot.sum(axis=1), axis=0) * 100
+
+            grouped_dom = pd.DataFrame({
+                'KR': spot_dominance_pivot[krw_cols].sum(axis=1),
+                'Non-KR': spot_dominance_pivot[non_krw_cols].sum(axis=1)
+            })
+            grouped_vol = pd.DataFrame({
+                'KR': spot_volume_pivot[krw_cols].sum(axis=1),
+                'Non-KR': spot_volume_pivot[non_krw_cols].sum(axis=1)
+            })
+
+        else:  # Spot+Perp 모드
+            # Spot과 Perp 데이터를 합치기 위해 exchange_base 컬럼 사용
+            share_df['exchange_base'] = share_df['exchange'].str.replace(
+                '_perp', '')
+            volume_df = historical_df.copy()
+            volume_df['exchange_base'] = volume_df['exchange'].str.replace(
+                '_perp', '')
+
+            # 합친 데이터로 새로운 피벗 테이블 생성
+            combined_share = share_df.groupby(['date', 'exchange_base'])[
+                'market_share_pct'].sum().reset_index()
+            combined_volume = volume_df.groupby(['date', 'exchange_base'])[
+                'volume_usd'].sum().reset_index()
+
+            dominance_pivot = combined_share.pivot(
+                index='date', columns='exchange_base', values='market_share_pct').fillna(0)
+            volume_pivot = combined_volume.pivot(
+                index='date', columns='exchange_base', values='volume_usd').fillna(0)
+
+            # KR/Non-KR 그룹화 (합친 데이터 기준)
+            krw_cols = [col for col in dominance_pivot.columns if any(
+                ex in col for ex in krw_exchanges)]
+            non_krw_cols = [col for col in dominance_pivot.columns if any(
+                ex in col for ex in non_krw_exchanges)]
+
+            grouped_dom = pd.DataFrame({
+                'KR': dominance_pivot[krw_cols].sum(axis=1),
+                'Non-KR': dominance_pivot[non_krw_cols].sum(axis=1)
+            })
+            grouped_vol = pd.DataFrame({
+                'KR': volume_pivot[krw_cols].sum(axis=1),
+                'Non-KR': volume_pivot[non_krw_cols].sum(axis=1)
+            })
+
+        total_kr_non_kr_vol = grouped_vol['KR'] + grouped_vol['Non-KR']
+
+        # 1-2. KR vs Non-KR Dominance(%) + 전체 거래량 area (subplot)
+        mode_title = "Spot Only" if volume_mode == "Spot Only" else "Spot + Perp"
+        st.subheader(
+            f"KR vs Non-KR: Dominance (%) & Total Volume ({mode_title})")
+        fig_spot_perp = make_subplots(
+            rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05,
+            subplot_titles=("Dominance (%)", "Total Volume (USD)"),
+            specs=[[{"secondary_y": True}], [{}]]
+        )
+        # Row 1: Dominance stacked bar (y1, opacity) + candlestick (y2)
+        fig_spot_perp_traces = []
+        fig_spot_perp_traces.append(go.Bar(
+            name='KR',
+            x=grouped_dom.index.astype(str),
+            y=grouped_dom['KR'],
+            marker_color='royalblue',
+            opacity=1.0
+        ))
+        fig_spot_perp_traces.append(go.Bar(
+            name='Non-KR',
+            x=grouped_dom.index.astype(str),
+            y=grouped_dom['Non-KR'],
+            marker_color='orange',
+            opacity=1.0
+        ))
+        if ohlc_df is not None and not ohlc_df.empty:
+            fig_spot_perp_traces.append(go.Candlestick(
+                x=ohlc_df.index.astype(str),
+                open=ohlc_df['open'],
+                high=ohlc_df['high'],
+                low=ohlc_df['low'],
+                close=ohlc_df['close'],
+                name='Candle',
+                increasing_line_color='green', decreasing_line_color='red',
+                increasing_line_width=2, decreasing_line_width=2
+            ))
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[0], row=1, col=1, secondary_y=False)
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[1], row=1, col=1, secondary_y=False)
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[2], row=1, col=1, secondary_y=True)
+        elif not price_df.empty:
+            fig_spot_perp_traces.append(go.Scatter(
+                x=price_df.index.astype(str),
+                y=price_df['close'],
+                name='Close Price',
+                mode='lines+markers',
+                line=dict(color='black', width=2),
+            ))
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[0], row=1, col=1, secondary_y=False)
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[1], row=1, col=1, secondary_y=False)
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[2], row=1, col=1, secondary_y=True)
+        else:
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[0], row=1, col=1, secondary_y=False)
+            fig_spot_perp.add_trace(
+                fig_spot_perp_traces[1], row=1, col=1, secondary_y=False)
+        # Row 2: 전체 거래량 area (단일)
+        fig_spot_perp.add_trace(go.Scatter(
+            x=total_kr_non_kr_vol.index.astype(str),
+            y=total_kr_non_kr_vol,
+            name='Total Volume',
+            fill='tozeroy',
+            mode='none',
+            fillcolor='rgba(44, 160, 101, 0.3)',
+            opacity=1.0
+        ), row=2, col=1)
+
+        fig_spot_perp.update_layout(
+            barmode='stack',
+            height=650,
+            margin=dict(l=40, r=40, t=40, b=40),
+            legend=dict(x=1.05, y=1),
+        )
+        fig_spot_perp.update_yaxes(
+            title_text='Market Share (%)', row=1, col=1, secondary_y=False)
+        fig_spot_perp.update_yaxes(
+            title_text='Close Price', row=1, col=1, secondary_y=True)
+        fig_spot_perp.update_yaxes(
+            title_text='Total Volume (USD)', row=2, col=1)
+        fig_spot_perp.update_xaxes(
+            rangeslider=dict(visible=False), row=1, col=1)
+        st.plotly_chart(fig_spot_perp, use_container_width=True)
+
+        # 3-4. CEX별 Dominance(%) + 전체 거래량 area (subplot)
+        st.subheader("Exchange: Dominance (%) & Total Volume")
+        total_cex_vol = volume_pivot.sum(axis=1)
+        fig_cex = make_subplots(
+            rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05,
+            subplot_titles=("Dominance (%)", "Total Volume (USD)"),
+            specs=[[{"secondary_y": True}], [{}]]
+        )
+        # Row 1: Dominance stacked bar (y1, opacity) + candlestick (y2)
+        bar_traces = []
+        for exchange in dominance_pivot.columns:
+            bar_traces.append(go.Bar(
+                name=exchange,
+                x=dominance_pivot.index.astype(str),
+                y=dominance_pivot[exchange],
+                marker_color=exchange_colors.get(exchange, None),
+                opacity=1.0
+            ))
+        if ohlc_df is not None and not ohlc_df.empty:
+            candle_trace = go.Candlestick(
+                x=ohlc_df.index.astype(str),
+                open=ohlc_df['open'],
+                high=ohlc_df['high'],
+                low=ohlc_df['low'],
+                close=ohlc_df['close'],
+                name='Candle',
+                increasing_line_color='green', decreasing_line_color='red',
+                increasing_line_width=2, decreasing_line_width=2
+            )
+            for bar in bar_traces:
+                fig_cex.add_trace(bar, row=1, col=1, secondary_y=False)
+            fig_cex.add_trace(candle_trace, row=1, col=1, secondary_y=True)
+        elif not price_df.empty:
+            price_trace = go.Scatter(
+                x=price_df.index.astype(str),
+                y=price_df['close'],
+                name='Close Price',
+                mode='lines+markers',
+                line=dict(color='black', width=2),
+            )
+            for bar in bar_traces:
+                fig_cex.add_trace(bar, row=1, col=1, secondary_y=False)
+            fig_cex.add_trace(price_trace, row=1, col=1, secondary_y=True)
+        else:
+            for bar in bar_traces:
+                fig_cex.add_trace(bar, row=1, col=1, secondary_y=False)
+        # Row 2: 전체 거래량 area (단일)
+        fig_cex.add_trace(go.Scatter(
+            x=total_cex_vol.index.astype(str),
+            y=total_cex_vol,
+            name='Total Volume',
+            fill='tozeroy',
+            mode='none',
+            fillcolor='rgba(44, 160, 101, 0.3)',
+            opacity=1.0
+        ), row=2, col=1)
+
+        fig_cex.update_layout(
+            barmode='stack',
+            height=650,
+            margin=dict(l=40, r=40, t=40, b=40),
+            legend=dict(x=1.05, y=1),
+        )
+        fig_cex.update_yaxes(title_text='Market Share (%)',
+                             row=1, col=1, secondary_y=False)
+        fig_cex.update_yaxes(title_text='Close Price',
+                             row=1, col=1, secondary_y=True)
+        fig_cex.update_yaxes(title_text='Total Volume (USD)', row=2, col=1)
+        fig_cex.update_xaxes(rangeslider=dict(visible=False), row=1, col=1)
+        st.plotly_chart(fig_cex, use_container_width=True)
+
+        # Table: Exchange volume (moved below charts)
+        st.subheader(f"{days}-Day Exchange Volume Table for {ticker}")
+        volume_table = historical_df.pivot(
+            index='date', columns='exchange', values='volume_usd').fillna(0).round(2)
+        st.dataframe(volume_table)
+    else:
+        st.warning(f"No historical data available for {ticker}.")
+else:
+    st.info("Please enter a token ticker to view data.")
