@@ -17,7 +17,30 @@ class ExchangeVolumeAnalyzer:
         common_config = {
             'enableRateLimit': True,
             'timeout': 10000,  # 10 seconds timeout
-            'rateLimit': 50,  # 50ms between requests (very fast)
+            'rateLimit': 100,  # 100ms between requests (increased from 50ms)
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True,
+            }
+        }
+
+        # Special config for Binance and Bybit (more conservative)
+        binance_config = {
+            'enableRateLimit': True,
+            'timeout': 15000,  # 15 seconds timeout
+            'rateLimit': 200,  # 200ms between requests (more conservative)
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True,
+                'recvWindow': 60000,
+                'warnOnFetchOHLCVLimitArgument': False,
+            }
+        }
+
+        bybit_config = {
+            'enableRateLimit': True,
+            'timeout': 15000,  # 15 seconds timeout
+            'rateLimit': 200,  # 200ms between requests (more conservative)
             'options': {
                 'defaultType': 'spot',
                 'adjustForTimeDifference': True,
@@ -25,13 +48,13 @@ class ExchangeVolumeAnalyzer:
         }
 
         self.exchanges = {
-            'binance': ccxt.binance({**common_config, 'options': {**common_config['options'], 'recvWindow': 60000}}),
+            'binance': ccxt.binance(binance_config),
             'coinbase': ccxt.coinbase({**common_config, 'options': {**common_config['options'], 'sandbox': False}}),
             'upbit': ccxt.upbit({**common_config}),
             'bithumb': ccxt.bithumb({**common_config}),
             'kraken': ccxt.kraken({**common_config}),
             'okx': ccxt.okx({**common_config}),
-            'bybit': ccxt.bybit({**common_config}),
+            'bybit': ccxt.bybit(bybit_config),
             'kucoin': ccxt.kucoin({**common_config})
         }
 
@@ -80,6 +103,20 @@ class ExchangeVolumeAnalyzer:
         # Fetch spot volume data
         for exchange_name, exchange in self.exchanges.items():
             try:
+                # Special debugging for Binance and Bybit
+                if exchange_name in ['binance', 'bybit']:
+                    print(
+                        f"🔍 Debug: Testing {exchange_name} 24h volume connection...")
+                    try:
+                        # Test basic connection first
+                        test_ticker = exchange.fetch_ticker('BTC/USDT')
+                        print(
+                            f"✅ {exchange_name} 24h connection test successful")
+                    except Exception as conn_error:
+                        print(
+                            f"❌ {exchange_name} 24h connection test failed: {str(conn_error)}")
+                        continue
+
                 markets = exchange.load_markets()
                 exchange_volume = 0
                 exchange_data = {}
@@ -126,6 +163,12 @@ class ExchangeVolumeAnalyzer:
 
             except Exception as e:
                 print(f"{exchange_name} spot volume fetch failed: {str(e)}")
+                # More detailed error info for problematic exchanges
+                if exchange_name in ['binance', 'bybit']:
+                    print(
+                        f"🔍 {exchange_name} 24h error details: {type(e).__name__}")
+                    if hasattr(e, 'response'):
+                        print(f"🔍 {exchange_name} 24h response: {e.response}")
 
         # Fetch perpetual futures volume data
         for exchange_name, exchange in self.futures_exchanges.items():
@@ -218,12 +261,26 @@ class ExchangeVolumeAnalyzer:
 
             try:
                 print(f"Fetching spot data from {exchange_name}...")
+
+                # Special debugging for Binance and Bybit
+                if exchange_name in ['binance', 'bybit']:
+                    print(f"🔍 Debug: Testing {exchange_name} connection...")
+                    try:
+                        # Test basic connection first
+                        test_ticker = exchange.fetch_ticker('BTC/USDT')
+                        print(f"✅ {exchange_name} connection test successful")
+                    except Exception as conn_error:
+                        print(
+                            f"❌ {exchange_name} connection test failed: {str(conn_error)}")
+                        continue
+
                 markets = exchange.load_markets()
                 if symbol not in markets:
                     print(f"{exchange_name} does not support {symbol} (spot)")
                     continue
 
                 # Fetch daily OHLCV data (excluding today)
+                print(f"📊 Fetching OHLCV from {exchange_name} for {symbol}...")
                 ohlcv_data = exchange.fetch_ohlcv(symbol, '1d', limit=days-1)
 
                 if ohlcv_data and len(ohlcv_data) > 0:
@@ -256,6 +313,11 @@ class ExchangeVolumeAnalyzer:
 
             except Exception as e:
                 print(f"❌ {exchange_name} spot data fetch failed: {str(e)}")
+                # More detailed error info for problematic exchanges
+                if exchange_name in ['binance', 'bybit']:
+                    print(f"🔍 {exchange_name} error details: {type(e).__name__}")
+                    if hasattr(e, 'response'):
+                        print(f"🔍 {exchange_name} response: {e.response}")
 
         # Fetch perpetual futures historical data
         successful_perp_exchanges = []
