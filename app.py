@@ -3,11 +3,16 @@ import pandas as pd
 import plotly.graph_objs as go
 from datetime import datetime, timedelta
 from plotly.subplots import make_subplots
+import time
 
 from main import ExchangeVolumeAnalyzer
 
 st.set_page_config(page_title="Exchange Dominance Dashboard", layout="wide")
 st.title("Exchange Dominance & Price Dashboard")
+
+# Add session state for caching
+if 'analyzer' not in st.session_state:
+    st.session_state.analyzer = ExchangeVolumeAnalyzer()
 
 # Ticker input
 ticker = st.text_input("Enter token ticker (e.g., SOL, PENGU):", value="PENGU")
@@ -16,32 +21,70 @@ days = st.number_input("Select period (days)", min_value=2,
                        max_value=60, value=14, step=1)
 
 if ticker:
-    analyzer = ExchangeVolumeAnalyzer()
-    with st.spinner(f"Fetching data for {ticker} ({days} days)..."):
-        # Get historical data (excluding today)
-        historical_df = analyzer.fetch_historical_data(ticker, int(days))
+    analyzer = st.session_state.analyzer
 
-        # Get today's data separately
-        today_df = analyzer.get_today_data(ticker)
+    # Add progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-        # Combine historical and today's data
-        if not today_df.empty:
-            combined_df = pd.concat(
-                [historical_df, today_df], ignore_index=True)
-            print(
-                f"Combined {len(historical_df)} historical records + {len(today_df)} today records")
-        else:
-            combined_df = historical_df
-            print(f"Using {len(historical_df)} historical records only")
+    try:
+        with st.spinner(f"Fetching data for {ticker} ({days} days)..."):
+            status_text.text("📈 Fetching historical data...")
+            progress_bar.progress(30)
+
+            # Get historical data (excluding today)
+            historical_df = analyzer.fetch_historical_data(ticker, int(days))
+
+            status_text.text("📊 Fetching today's data...")
+            progress_bar.progress(60)
+
+            # Get today's data separately
+            today_df = analyzer.get_today_data(ticker)
+
+            status_text.text("🔄 Processing and combining data...")
+            progress_bar.progress(80)
+
+            # Combine historical and today's data
+            if not today_df.empty:
+                combined_df = pd.concat(
+                    [historical_df, today_df], ignore_index=True)
+                st.success(
+                    f"✅ Combined {len(historical_df)} historical records + {len(today_df)} today records")
+            else:
+                combined_df = historical_df
+                st.warning(
+                    f"⚠️ Using {len(historical_df)} historical records only (today's data unavailable)")
+
+            progress_bar.progress(100)
+            status_text.text("🎉 Data processing complete!")
+            time.sleep(0.5)
+            progress_bar.empty()
+            status_text.empty()
+
+    except Exception as e:
+        st.error(f"❌ Error fetching data: {str(e)}")
+        st.info("💡 Try refreshing the page or check your internet connection.")
+        st.stop()
 
     if not combined_df.empty:
         # Remove duplicates before pivot
-        print(f"Before deduplication: {len(combined_df)} records")
+        st.info(f"📊 Processing {len(combined_df)} total records")
 
         # Remove duplicates based on date and exchange (keep the latest record)
         combined_df = combined_df.drop_duplicates(
             subset=['date', 'exchange'], keep='last')
-        print(f"After deduplication: {len(combined_df)} records")
+
+        # Show which exchanges we have data for
+        available_exchanges = combined_df['exchange'].unique()
+        st.success(f"✅ Data available for: {', '.join(available_exchanges)}")
+
+        # Show missing exchanges
+        expected_exchanges = ['binance', 'bybit', 'okx',
+                              'kucoin', 'coinbase', 'kraken', 'upbit', 'bithumb']
+        missing_exchanges = [
+            ex for ex in expected_exchanges if ex not in available_exchanges]
+        if missing_exchanges:
+            st.warning(f"⚠️ Missing data for: {', '.join(missing_exchanges)}")
 
         # Dominance (market share) calculation
         share_df = analyzer.calculate_daily_market_share(combined_df)
@@ -49,6 +92,7 @@ if ticker:
             index='date', columns='exchange', values='market_share_pct').fillna(0)
         volume_pivot = combined_df.pivot(
             index='date', columns='exchange', values='volume_usd').fillna(0)
+
         # Prepare price_df for close price (binance preferred, else first exchange)
         if 'close' in combined_df.columns:
             if 'binance' in combined_df['exchange'].unique():
@@ -61,13 +105,19 @@ if ticker:
         else:
             price_df = pd.DataFrame(columns=['close'])
 
-        # Add current price for today (temporarily disabled)
-        current_price = 0.0  # Temporarily set to 0
-        # current_price = analyzer.get_current_price(ticker)
-        # if current_price > 0:
-        #     today = datetime.now().date()
-        #     price_df.loc[today] = current_price
-        #     print(f"Added current price for today ({today}): ${current_price}")
+        # Add current price for today (with better error handling)
+        current_price = 0.0
+        try:
+            with st.spinner("💰 Fetching current price..."):
+                current_price = analyzer.get_current_price(ticker)
+            if current_price > 0:
+                today = datetime.now().date()
+                price_df.loc[today] = current_price
+                st.success(f"💰 Current price: ${current_price:,.4f}")
+            else:
+                st.warning("⚠️ Could not fetch current price")
+        except Exception as e:
+            st.warning(f"⚠️ Error fetching current price: {str(e)}")
 
         krw_exchanges = ['upbit', 'bithumb']
         exchange_colors = {
@@ -165,9 +215,10 @@ if ticker:
         st.subheader(
             f"KR vs Non-KR: Dominance (%) & Total Volume ({mode_title})")
 
-        # Display current price (temporarily disabled)
-        # if current_price > 0:
-        #     st.metric("Current Price", f"${current_price:,.4f}")
+        # Display current price
+        if current_price > 0:
+            st.metric("Current Price", f"${current_price:,.4f}")
+
         fig_spot_perp = make_subplots(
             rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05,
             subplot_titles=("Dominance (%)", "Total Volume (USD)"),
@@ -293,5 +344,7 @@ if ticker:
         st.dataframe(volume_table)
     else:
         st.warning(f"No historical data available for {ticker}.")
+        st.info(
+            "💡 Try a different ticker or check if the token is listed on major exchanges.")
 else:
     st.info("Please enter a token ticker to view data.")

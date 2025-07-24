@@ -5,28 +5,44 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 import json
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 class ExchangeVolumeAnalyzer:
     def __init__(self):
-        """Initialize supported exchanges"""
+        """Initialize supported exchanges with optimized settings"""
+        # Common config for all exchanges - optimized for speed
+        common_config = {
+            'enableRateLimit': True,
+            'timeout': 10000,  # 10 seconds timeout
+            'rateLimit': 50,  # 50ms between requests (very fast)
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True,
+            }
+        }
+
         self.exchanges = {
-            'binance': ccxt.binance({'enableRateLimit': True}),
-            'coinbase': ccxt.coinbase({'enableRateLimit': True}),
-            'upbit': ccxt.upbit({'enableRateLimit': True}),
-            'bithumb': ccxt.bithumb({'enableRateLimit': True}),
-            'kraken': ccxt.kraken({'enableRateLimit': True}),
-            'okx': ccxt.okx({'enableRateLimit': True}),
-            'bybit': ccxt.bybit({'enableRateLimit': True}),
-            'kucoin': ccxt.kucoin({'enableRateLimit': True})
+            'binance': ccxt.binance({**common_config, 'options': {**common_config['options'], 'recvWindow': 60000}}),
+            'coinbase': ccxt.coinbase({**common_config, 'options': {**common_config['options'], 'sandbox': False}}),
+            'upbit': ccxt.upbit({**common_config}),
+            'bithumb': ccxt.bithumb({**common_config}),
+            'kraken': ccxt.kraken({**common_config}),
+            'okx': ccxt.okx({**common_config}),
+            'bybit': ccxt.bybit({**common_config}),
+            'kucoin': ccxt.kucoin({**common_config})
         }
 
         # Futures exchanges (support perpetual contracts)
+        futures_config = {**common_config,
+                          'options': {**common_config['options']}}
         self.futures_exchanges = {
-            'binance': ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'future'}}),
-            'okx': ccxt.okx({'enableRateLimit': True, 'options': {'defaultType': 'swap'}}),
-            'bybit': ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'linear'}}),
-            'kucoin': ccxt.kucoin({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+            'binance': ccxt.binance({**futures_config, 'options': {**futures_config['options'], 'defaultType': 'future', 'recvWindow': 60000}}),
+            'okx': ccxt.okx({**futures_config, 'options': {**futures_config['options'], 'defaultType': 'swap'}}),
+            'bybit': ccxt.bybit({**futures_config, 'options': {**futures_config['options'], 'defaultType': 'linear'}}),
+            'kucoin': ccxt.kucoin({**futures_config, 'options': {**futures_config['options'], 'defaultType': 'swap'}})
         }
 
         # KRW-based exchanges
@@ -98,20 +114,18 @@ class ExchangeVolumeAnalyzer:
                     except Exception as e:
                         print(
                             f"{exchange_name} {symbol} spot data fetch failed: {str(e)}")
-                        continue
 
                 if exchange_volume > 0:
                     volume_data[exchange_name] = {
-                        'total_volume_usd': exchange_volume,
                         'spot_volume_usd': exchange_volume,
                         'perp_volume_usd': 0,
-                        'pairs': exchange_data,
-                        'timestamp': datetime.now().isoformat()
+                        'total_volume_usd': exchange_volume,
+                        'spot_data': exchange_data
                     }
                     total_volume_usd += exchange_volume
 
             except Exception as e:
-                print(f"{exchange_name} spot exchange data fetch failed: {str(e)}")
+                print(f"{exchange_name} spot volume fetch failed: {str(e)}")
 
         # Fetch perpetual futures volume data
         for exchange_name, exchange in self.futures_exchanges.items():
@@ -120,11 +134,10 @@ class ExchangeVolumeAnalyzer:
                 perp_volume = 0
                 perp_data = {}
 
-                # Get perpetual symbols for the coin
+                # Get all perp pairs for the coin
                 perp_symbols = []
                 for symbol in markets:
-                    # Look for perpetual contracts (usually ends with :USDT or /USDT:USDT)
-                    if (f'{coin}/USDT' in symbol or f'{coin}:USDT' in symbol) and 'PERP' not in symbol:
+                    if f'{coin}/USDT' in symbol or f'{coin}:USDT' in symbol:
                         perp_symbols.append(symbol)
 
                 for symbol in perp_symbols:
@@ -134,10 +147,13 @@ class ExchangeVolumeAnalyzer:
                             'baseVolume', 0) or 0
 
                         if volume_24h > 0:
-                            perp_volume += volume_24h
+                            # Perp volume is already in USD
+                            volume_usd = volume_24h
+
+                            perp_volume += volume_usd
                             perp_data[symbol] = {
                                 'volume_24h': volume_24h,
-                                'volume_usd': volume_24h,
+                                'volume_usd': volume_usd,
                                 'price': ticker.get('last', 0),
                                 'timestamp': ticker.get('timestamp', time.time() * 1000),
                                 'type': 'perp'
@@ -145,35 +161,24 @@ class ExchangeVolumeAnalyzer:
                     except Exception as e:
                         print(
                             f"{exchange_name} {symbol} perp data fetch failed: {str(e)}")
-                        continue
 
                 if perp_volume > 0:
+                    # Add to existing exchange data or create new entry
                     if exchange_name in volume_data:
-                        # Add perp volume to existing exchange data
                         volume_data[exchange_name]['perp_volume_usd'] = perp_volume
                         volume_data[exchange_name]['total_volume_usd'] += perp_volume
-                        volume_data[exchange_name]['pairs'].update(perp_data)
+                        volume_data[exchange_name]['perp_data'] = perp_data
                     else:
-                        # Create new entry for futures-only exchange
                         volume_data[exchange_name] = {
-                            'total_volume_usd': perp_volume,
                             'spot_volume_usd': 0,
                             'perp_volume_usd': perp_volume,
-                            'pairs': perp_data,
-                            'timestamp': datetime.now().isoformat()
+                            'total_volume_usd': perp_volume,
+                            'perp_data': perp_data
                         }
                     total_volume_usd += perp_volume
 
             except Exception as e:
-                print(f"{exchange_name} perp exchange data fetch failed: {str(e)}")
-
-        # Calculate market share
-        for exchange_name in volume_data:
-            volume_data[exchange_name]['market_share_pct'] = (
-                volume_data[exchange_name]['total_volume_usd'] /
-                total_volume_usd * 100
-                if total_volume_usd > 0 else 0
-            )
+                print(f"{exchange_name} perp volume fetch failed: {str(e)}")
 
         return volume_data, total_volume_usd
 
@@ -204,6 +209,7 @@ class ExchangeVolumeAnalyzer:
         }
 
         # Fetch spot historical data
+        successful_spot_exchanges = []
         for exchange_name, symbol in spot_pairs.items():
             if exchange_name not in self.exchanges:
                 continue
@@ -211,6 +217,7 @@ class ExchangeVolumeAnalyzer:
             exchange = self.exchanges[exchange_name]
 
             try:
+                print(f"Fetching spot data from {exchange_name}...")
                 markets = exchange.load_markets()
                 if symbol not in markets:
                     print(f"{exchange_name} does not support {symbol} (spot)")
@@ -219,34 +226,39 @@ class ExchangeVolumeAnalyzer:
                 # Fetch daily OHLCV data (excluding today)
                 ohlcv_data = exchange.fetch_ohlcv(symbol, '1d', limit=days-1)
 
-                for ohlcv in ohlcv_data:
-                    timestamp, open_price, high, low, close, volume = ohlcv
-                    date = datetime.fromtimestamp(timestamp / 1000).date()
+                if ohlcv_data and len(ohlcv_data) > 0:
+                    for ohlcv in ohlcv_data:
+                        timestamp, open_price, high, low, close, volume = ohlcv
+                        date = datetime.fromtimestamp(timestamp / 1000).date()
 
-                    # USD 환산 거래량 (고정 환율 1350)
-                    if symbol.endswith('/KRW'):
-                        volume_usd = volume * close / 1350  # KRW to USD
-                    else:
-                        volume_usd = volume * close  # Quote volume in USD
+                        if symbol.endswith('/KRW'):
+                            volume_usd = volume * close / 1350
+                        else:
+                            volume_usd = volume * close
 
-                    historical_data.append({
-                        'date': date,
-                        'exchange': exchange_name,
-                        'symbol': symbol,
-                        'volume_base': volume,
-                        'volume_usd': volume_usd,
-                        'open': open_price,
-                        'high': high,
-                        'low': low,
-                        'close': close,
-                        'type': 'spot'
-                    })
+                        historical_data.append({
+                            'date': date,
+                            'exchange': exchange_name,
+                            'symbol': symbol,
+                            'volume_base': volume,
+                            'volume_usd': volume_usd,
+                            'open': open_price,
+                            'high': high,
+                            'low': low,
+                            'close': close,
+                            'type': 'spot'
+                        })
+                    successful_spot_exchanges.append(exchange_name)
+                    print(
+                        f"✅ {exchange_name} spot data: {len(ohlcv_data)} records")
+                else:
+                    print(f"⚠️ {exchange_name} returned empty spot data")
 
             except Exception as e:
-                print(
-                    f"{exchange_name} {symbol} spot historical data fetch failed: {str(e)}")
+                print(f"❌ {exchange_name} spot data fetch failed: {str(e)}")
 
         # Fetch perpetual futures historical data
+        successful_perp_exchanges = []
         for exchange_name, symbol in perp_pairs.items():
             if exchange_name not in self.futures_exchanges:
                 continue
@@ -254,8 +266,9 @@ class ExchangeVolumeAnalyzer:
             exchange = self.futures_exchanges[exchange_name]
 
             try:
+                print(f"Fetching perp data from {exchange_name}...")
                 markets = exchange.load_markets()
-                # Find the correct perp symbol format for each exchange
+
                 perp_symbol = None
                 for market_symbol in markets:
                     if f'{coin}/USDT' in market_symbol or f'{coin}:USDT' in market_symbol:
@@ -266,33 +279,38 @@ class ExchangeVolumeAnalyzer:
                     print(f"{exchange_name} does not support {coin} perpetual")
                     continue
 
-                # Fetch daily OHLCV data (excluding today)
                 ohlcv_data = exchange.fetch_ohlcv(
                     perp_symbol, '1d', limit=days-1)
 
-                for ohlcv in ohlcv_data:
-                    timestamp, open_price, high, low, close, volume = ohlcv
-                    date = datetime.fromtimestamp(timestamp / 1000).date()
+                if ohlcv_data and len(ohlcv_data) > 0:
+                    for ohlcv in ohlcv_data:
+                        timestamp, open_price, high, low, close, volume = ohlcv
+                        date = datetime.fromtimestamp(timestamp / 1000).date()
+                        volume_usd = volume * close
 
-                    # Perp volume is already in USD
-                    volume_usd = volume * close
-
-                    historical_data.append({
-                        'date': date,
-                        'exchange': f"{exchange_name}_perp",
-                        'symbol': perp_symbol,
-                        'volume_base': volume,
-                        'volume_usd': volume_usd,
-                        'open': open_price,
-                        'high': high,
-                        'low': low,
-                        'close': close,
-                        'type': 'perp'
-                    })
+                        historical_data.append({
+                            'date': date,
+                            'exchange': f"{exchange_name}_perp",
+                            'symbol': perp_symbol,
+                            'volume_base': volume,
+                            'volume_usd': volume_usd,
+                            'open': open_price,
+                            'high': high,
+                            'low': low,
+                            'close': close,
+                            'type': 'perp'
+                        })
+                    successful_perp_exchanges.append(exchange_name)
+                    print(
+                        f"✅ {exchange_name} perp data: {len(ohlcv_data)} records")
+                else:
+                    print(f"⚠️ {exchange_name} returned empty perp data")
 
             except Exception as e:
-                print(
-                    f"{exchange_name} {symbol} perp historical data fetch failed: {str(e)}")
+                print(f"❌ {exchange_name} perp data fetch failed: {str(e)}")
+
+        print(
+            f"📊 Successfully fetched data from {len(successful_spot_exchanges)} spot exchanges and {len(successful_perp_exchanges)} perp exchanges")
 
         df = pd.DataFrame(historical_data)
         return df
@@ -373,7 +391,7 @@ class ExchangeVolumeAnalyzer:
                 except:
                     pass
 
-                    # Add combined data (spot + perp for same exchange)
+            # Add combined data (spot + perp for same exchange)
             total_volume = spot_volume + perp_volume
             if total_volume > 0:
                 today_data.append({
