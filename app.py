@@ -18,37 +18,56 @@ days = st.number_input("Select period (days)", min_value=2,
 if ticker:
     analyzer = ExchangeVolumeAnalyzer()
     with st.spinner(f"Fetching data for {ticker} ({days} days)..."):
+        # Get historical data (excluding today)
         historical_df = analyzer.fetch_historical_data(ticker, int(days))
 
-    if not historical_df.empty:
+        # Get today's data separately
+        today_df = analyzer.get_today_data(ticker)
+
+        # Combine historical and today's data
+        if not today_df.empty:
+            combined_df = pd.concat(
+                [historical_df, today_df], ignore_index=True)
+            print(
+                f"Combined {len(historical_df)} historical records + {len(today_df)} today records")
+        else:
+            combined_df = historical_df
+            print(f"Using {len(historical_df)} historical records only")
+
+    if not combined_df.empty:
+        # Remove duplicates before pivot
+        print(f"Before deduplication: {len(combined_df)} records")
+
+        # Remove duplicates based on date and exchange (keep the latest record)
+        combined_df = combined_df.drop_duplicates(
+            subset=['date', 'exchange'], keep='last')
+        print(f"After deduplication: {len(combined_df)} records")
+
         # Dominance (market share) calculation
-        share_df = analyzer.calculate_daily_market_share(historical_df)
+        share_df = analyzer.calculate_daily_market_share(combined_df)
         dominance_pivot = share_df.pivot(
             index='date', columns='exchange', values='market_share_pct').fillna(0)
-        volume_pivot = historical_df.pivot(
+        volume_pivot = combined_df.pivot(
             index='date', columns='exchange', values='volume_usd').fillna(0)
-        # Prepare price_df and OHLC for candlestick (binance preferred, else first exchange)
-        if 'close' in historical_df.columns:
-            if 'binance' in historical_df['exchange'].unique():
-                price_df = historical_df[historical_df['exchange'] == 'binance'][[
+        # Prepare price_df for close price (binance preferred, else first exchange)
+        if 'close' in combined_df.columns:
+            if 'binance' in combined_df['exchange'].unique():
+                price_df = combined_df[combined_df['exchange'] == 'binance'][[
                     'date', 'close']].drop_duplicates(subset=['date']).set_index('date')
             else:
-                price_df = historical_df.groupby(
+                price_df = combined_df.groupby(
                     'date')['close'].first().to_frame()
             price_df = price_df.sort_index()
         else:
             price_df = pd.DataFrame(columns=['close'])
 
-        if all(col in historical_df.columns for col in ['open', 'high', 'low', 'close']):
-            if 'binance' in historical_df['exchange'].unique():
-                ohlc_df = historical_df[historical_df['exchange'] == 'binance'][[
-                    'date', 'open', 'high', 'low', 'close']].drop_duplicates(subset=['date']).set_index('date')
-            else:
-                ohlc_df = historical_df.groupby('date').first()[
-                    ['open', 'high', 'low', 'close']]
-            ohlc_df = ohlc_df.sort_index()
-        else:
-            ohlc_df = None
+        # Add current price for today (temporarily disabled)
+        current_price = 0.0  # Temporarily set to 0
+        # current_price = analyzer.get_current_price(ticker)
+        # if current_price > 0:
+        #     today = datetime.now().date()
+        #     price_df.loc[today] = current_price
+        #     print(f"Added current price for today ({today}): ${current_price}")
 
         krw_exchanges = ['upbit', 'bithumb']
         exchange_colors = {
@@ -145,63 +164,42 @@ if ticker:
         mode_title = "Spot Only" if volume_mode == "Spot Only" else "Spot + Perp"
         st.subheader(
             f"KR vs Non-KR: Dominance (%) & Total Volume ({mode_title})")
+
+        # Display current price (temporarily disabled)
+        # if current_price > 0:
+        #     st.metric("Current Price", f"${current_price:,.4f}")
         fig_spot_perp = make_subplots(
             rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05,
             subplot_titles=("Dominance (%)", "Total Volume (USD)"),
             specs=[[{"secondary_y": True}], [{}]]
         )
-        # Row 1: Dominance stacked bar (y1, opacity) + candlestick (y2)
-        fig_spot_perp_traces = []
-        fig_spot_perp_traces.append(go.Bar(
+        # Row 1: Dominance stacked bar (y1) + close price (y2)
+        fig_spot_perp.add_trace(go.Bar(
             name='KR',
             x=grouped_dom.index.astype(str),
             y=grouped_dom['KR'],
             marker_color='royalblue',
             opacity=1.0
-        ))
-        fig_spot_perp_traces.append(go.Bar(
+        ), row=1, col=1, secondary_y=False)
+
+        fig_spot_perp.add_trace(go.Bar(
             name='Non-KR',
             x=grouped_dom.index.astype(str),
             y=grouped_dom['Non-KR'],
             marker_color='orange',
             opacity=1.0
-        ))
-        if ohlc_df is not None and not ohlc_df.empty:
-            fig_spot_perp_traces.append(go.Candlestick(
-                x=ohlc_df.index.astype(str),
-                open=ohlc_df['open'],
-                high=ohlc_df['high'],
-                low=ohlc_df['low'],
-                close=ohlc_df['close'],
-                name='Candle',
-                increasing_line_color='green', decreasing_line_color='red',
-                increasing_line_width=2, decreasing_line_width=2
-            ))
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[0], row=1, col=1, secondary_y=False)
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[1], row=1, col=1, secondary_y=False)
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[2], row=1, col=1, secondary_y=True)
-        elif not price_df.empty:
-            fig_spot_perp_traces.append(go.Scatter(
+        ), row=1, col=1, secondary_y=False)
+
+        # Add close price line
+        if not price_df.empty:
+            fig_spot_perp.add_trace(go.Scatter(
                 x=price_df.index.astype(str),
                 y=price_df['close'],
                 name='Close Price',
                 mode='lines+markers',
                 line=dict(color='black', width=2),
-            ))
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[0], row=1, col=1, secondary_y=False)
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[1], row=1, col=1, secondary_y=False)
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[2], row=1, col=1, secondary_y=True)
-        else:
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[0], row=1, col=1, secondary_y=False)
-            fig_spot_perp.add_trace(
-                fig_spot_perp_traces[1], row=1, col=1, secondary_y=False)
+                yaxis='y2'
+            ), row=1, col=1, secondary_y=True)
         # Row 2: 전체 거래량 area (단일)
         fig_spot_perp.add_trace(go.Scatter(
             x=total_kr_non_kr_vol.index.astype(str),
@@ -237,7 +235,7 @@ if ticker:
             subplot_titles=("Dominance (%)", "Total Volume (USD)"),
             specs=[[{"secondary_y": True}], [{}]]
         )
-        # Row 1: Dominance stacked bar (y1, opacity) + candlestick (y2)
+        # Row 1: Dominance stacked bar (y1) + close price (y2)
         bar_traces = []
         for exchange in dominance_pivot.columns:
             bar_traces.append(go.Bar(
@@ -247,34 +245,22 @@ if ticker:
                 marker_color=exchange_colors.get(exchange, None),
                 opacity=1.0
             ))
-        if ohlc_df is not None and not ohlc_df.empty:
-            candle_trace = go.Candlestick(
-                x=ohlc_df.index.astype(str),
-                open=ohlc_df['open'],
-                high=ohlc_df['high'],
-                low=ohlc_df['low'],
-                close=ohlc_df['close'],
-                name='Candle',
-                increasing_line_color='green', decreasing_line_color='red',
-                increasing_line_width=2, decreasing_line_width=2
-            )
-            for bar in bar_traces:
-                fig_cex.add_trace(bar, row=1, col=1, secondary_y=False)
-            fig_cex.add_trace(candle_trace, row=1, col=1, secondary_y=True)
-        elif not price_df.empty:
+
+        # Add all bar traces
+        for bar in bar_traces:
+            fig_cex.add_trace(bar, row=1, col=1, secondary_y=False)
+
+        # Add close price line if available
+        if not price_df.empty:
             price_trace = go.Scatter(
                 x=price_df.index.astype(str),
                 y=price_df['close'],
                 name='Close Price',
                 mode='lines+markers',
                 line=dict(color='black', width=2),
+                yaxis='y2'
             )
-            for bar in bar_traces:
-                fig_cex.add_trace(bar, row=1, col=1, secondary_y=False)
             fig_cex.add_trace(price_trace, row=1, col=1, secondary_y=True)
-        else:
-            for bar in bar_traces:
-                fig_cex.add_trace(bar, row=1, col=1, secondary_y=False)
         # Row 2: 전체 거래량 area (단일)
         fig_cex.add_trace(go.Scatter(
             x=total_cex_vol.index.astype(str),
@@ -302,7 +288,7 @@ if ticker:
 
         # Table: Exchange volume (moved below charts)
         st.subheader(f"{days}-Day Exchange Volume Table for {ticker}")
-        volume_table = historical_df.pivot(
+        volume_table = combined_df.pivot(
             index='date', columns='exchange', values='volume_usd').fillna(0).round(2)
         st.dataframe(volume_table)
     else:

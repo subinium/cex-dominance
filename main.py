@@ -2,7 +2,7 @@ import ccxt
 import pandas as pd
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 import json
 
@@ -57,6 +57,7 @@ class ExchangeVolumeAnalyzer:
 
     def fetch_24h_volume_data(self, coin: str = 'SOL') -> Dict[str, Dict]:
         """Fetch 24h volume data including spot and perpetual futures"""
+        print(f"🔍 Fetching 24h volume data for {coin}...")
         volume_data = {}
         total_volume_usd = 0
 
@@ -77,12 +78,12 @@ class ExchangeVolumeAnalyzer:
                             'baseVolume', 0) or 0
 
                         if volume_24h > 0:
-                            # Convert to USD (approximate)
+                            # Convert to USD (fixed rate)
                             if symbol.endswith('/USDT') or symbol.endswith('/USDC') or symbol.endswith('/USD'):
                                 volume_usd = volume_24h
                             elif symbol.endswith('/KRW'):
-                                # Convert KRW to USD (approximate 1 USD = 1300 KRW)
-                                volume_usd = volume_24h / 1300
+                                # Convert KRW to USD (fixed rate 1350)
+                                volume_usd = volume_24h / 1350
                             else:
                                 volume_usd = 0
 
@@ -177,7 +178,9 @@ class ExchangeVolumeAnalyzer:
         return volume_data, total_volume_usd
 
     def fetch_historical_data(self, coin: str = 'SOL', days: int = 14) -> pd.DataFrame:
-        """Fetch historical OHLCV data for the past N days including spot and perp"""
+        """Fetch historical OHLCV data for the past N days including spot and perp (excluding today)"""
+        print(
+            f"📈 Fetching {days-1} days historical data for {coin} (excluding today)...")
         historical_data = []
 
         # Spot trading pairs
@@ -213,14 +216,14 @@ class ExchangeVolumeAnalyzer:
                     print(f"{exchange_name} does not support {symbol} (spot)")
                     continue
 
-                # Fetch daily OHLCV data
-                ohlcv_data = exchange.fetch_ohlcv(symbol, '1d', limit=days)
+                # Fetch daily OHLCV data (excluding today)
+                ohlcv_data = exchange.fetch_ohlcv(symbol, '1d', limit=days-1)
 
                 for ohlcv in ohlcv_data:
                     timestamp, open_price, high, low, close, volume = ohlcv
                     date = datetime.fromtimestamp(timestamp / 1000).date()
 
-                    # USD 환산 거래량
+                    # USD 환산 거래량 (고정 환율 1350)
                     if symbol.endswith('/KRW'):
                         volume_usd = volume * close / 1350  # KRW to USD
                     else:
@@ -263,9 +266,9 @@ class ExchangeVolumeAnalyzer:
                     print(f"{exchange_name} does not support {coin} perpetual")
                     continue
 
-                # Fetch daily OHLCV data
+                # Fetch daily OHLCV data (excluding today)
                 ohlcv_data = exchange.fetch_ohlcv(
-                    perp_symbol, '1d', limit=days)
+                    perp_symbol, '1d', limit=days-1)
 
                 for ohlcv in ohlcv_data:
                     timestamp, open_price, high, low, close, volume = ohlcv
@@ -293,6 +296,100 @@ class ExchangeVolumeAnalyzer:
 
         df = pd.DataFrame(historical_data)
         return df
+
+    def get_current_price(self, coin: str = 'SOL') -> float:
+        """Get current price from major exchanges"""
+        prices = []
+
+        # Try to get current price from major exchanges
+        major_exchanges = ['binance', 'coinbase', 'kraken']
+
+        for exchange_name in major_exchanges:
+            if exchange_name not in self.exchanges:
+                continue
+
+            exchange = self.exchanges[exchange_name]
+
+            try:
+                # Try USDT pair first
+                symbol = f'{coin}/USDT'
+                if exchange_name == 'coinbase':
+                    symbol = f'{coin}/USD'
+
+                ticker = exchange.fetch_ticker(symbol)
+                current_price = ticker.get('last', 0)
+
+                if current_price > 0:
+                    prices.append(current_price)
+                    print(
+                        f"Current price from {exchange_name}: ${current_price}")
+
+            except Exception as e:
+                print(
+                    f"Failed to get current price from {exchange_name}: {str(e)}")
+                continue
+
+        if prices:
+            # Return average price
+            avg_price = sum(prices) / len(prices)
+            print(f"Average current price: ${avg_price}")
+            return avg_price
+        else:
+            print("Could not fetch current price")
+            return 0.0
+
+    def get_today_data(self, coin: str = 'SOL') -> pd.DataFrame:
+        """Get today's data from 24h volume data"""
+        print(f"📊 Getting today's data for {coin}...")
+        today_data = []
+        today = datetime.now().date()
+
+        # Get 24h volume data
+        volume_data, total_volume = self.fetch_24h_volume_data(coin)
+
+        if not volume_data:
+            return pd.DataFrame()
+
+        # Convert 24h data to today's format
+        for exchange_name, data in volume_data.items():
+            spot_volume = data.get('spot_volume_usd', 0)
+            perp_volume = data.get('perp_volume_usd', 0)
+            total_exchange_volume = data.get('total_volume_usd', 0)
+
+            # Get current price for this exchange
+            current_price = 0
+            if exchange_name in self.exchanges:
+                try:
+                    # Try to get price from the exchange
+                    if exchange_name in ['upbit', 'bithumb']:
+                        symbol = f'{coin}/KRW'
+                    elif exchange_name == 'coinbase':
+                        symbol = f'{coin}/USD'
+                    else:
+                        symbol = f'{coin}/USDT'
+
+                    ticker = self.exchanges[exchange_name].fetch_ticker(symbol)
+                    current_price = ticker.get('last', 0)
+                except:
+                    pass
+
+                    # Add combined data (spot + perp for same exchange)
+            total_volume = spot_volume + perp_volume
+            if total_volume > 0:
+                today_data.append({
+                    'date': today,
+                    'exchange': exchange_name,
+                    'symbol': f'{coin}/USDT' if exchange_name != 'coinbase' else f'{coin}/USD',
+                    'volume_base': total_volume / current_price if current_price > 0 else 0,
+                    'volume_usd': total_volume,
+                    'open': current_price,
+                    'high': current_price,
+                    'low': current_price,
+                    'close': current_price,
+                    'type': 'combined'
+                })
+
+        return pd.DataFrame(today_data)
 
     def calculate_daily_market_share(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate daily market share by exchange"""
