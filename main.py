@@ -8,45 +8,89 @@ import json
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import random
+import os
 
 
 class ExchangeVolumeAnalyzer:
     def __init__(self):
-        """Initialize supported exchanges with optimized settings"""
-        # Common config for all exchanges - optimized for speed
-        common_config = {
-            'enableRateLimit': True,
-            'timeout': 10000,  # 10 seconds timeout
-            'rateLimit': 100,  # 100ms between requests (increased from 50ms)
-            'options': {
-                'defaultType': 'spot',
-                'adjustForTimeDifference': True,
-            }
-        }
+        """Initialize supported exchanges with optimized settings for Streamlit Cloud"""
 
-        # Special config for Binance and Bybit (more conservative)
-        binance_config = {
-            'enableRateLimit': True,
-            'timeout': 15000,  # 15 seconds timeout
-            'rateLimit': 200,  # 200ms between requests (more conservative)
-            'options': {
-                'defaultType': 'spot',
-                'adjustForTimeDifference': True,
-                'recvWindow': 60000,
-                'warnOnFetchOHLCVLimitArgument': False,
-            }
-        }
+        # Check if running on Streamlit Cloud
+        self.is_streamlit_cloud = os.environ.get(
+            'STREAMLIT_SERVER_PORT') is not None
 
-        bybit_config = {
-            'enableRateLimit': True,
-            'timeout': 15000,  # 15 seconds timeout
-            'rateLimit': 200,  # 200ms between requests (more conservative)
-            'options': {
-                'defaultType': 'spot',
-                'adjustForTimeDifference': True,
+        # Streamlit Cloud specific settings
+        if self.is_streamlit_cloud:
+            print("🔧 Detected Streamlit Cloud environment - applying optimized settings")
+            # More conservative settings for Streamlit Cloud
+            common_config = {
+                'enableRateLimit': True,
+                'timeout': 45000,  # 45 seconds (under Streamlit's 60s limit)
+                'rateLimit': 500,  # 500ms between requests (more conservative)
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                }
             }
-        }
 
+            # Even more conservative for problematic exchanges
+            binance_config = {
+                'enableRateLimit': True,
+                'timeout': 45000,  # 45 seconds
+                'rateLimit': 1000,  # 1 second between requests
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                    'recvWindow': 60000,
+                    'warnOnFetchOHLCVLimitArgument': False,
+                }
+            }
+
+            bybit_config = {
+                'enableRateLimit': True,
+                'timeout': 45000,  # 45 seconds
+                'rateLimit': 1000,  # 1 second between requests
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                }
+            }
+        else:
+            # Local development settings
+            common_config = {
+                'enableRateLimit': True,
+                'timeout': 20000,  # 20 seconds timeout
+                'rateLimit': 150,  # 150ms between requests
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                }
+            }
+
+            binance_config = {
+                'enableRateLimit': True,
+                'timeout': 30000,  # 30 seconds timeout
+                'rateLimit': 300,  # 300ms between requests
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                    'recvWindow': 60000,
+                    'warnOnFetchOHLCVLimitArgument': False,
+                }
+            }
+
+            bybit_config = {
+                'enableRateLimit': True,
+                'timeout': 30000,  # 30 seconds timeout
+                'rateLimit': 300,  # 300ms between requests
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                }
+            }
+
+        # Initialize exchanges with appropriate configs
         self.exchanges = {
             'binance': ccxt.binance(binance_config),
             'coinbase': ccxt.coinbase({**common_config, 'options': {**common_config['options'], 'sandbox': False}}),
@@ -70,6 +114,65 @@ class ExchangeVolumeAnalyzer:
 
         # KRW-based exchanges
         self.krw_exchanges = ['upbit', 'bithumb']
+
+        # Streamlit Cloud specific exchange priority (more reliable ones first)
+        if self.is_streamlit_cloud:
+            self.exchange_priority = [
+                'kraken', 'coinbase', 'okx', 'kucoin', 'upbit', 'bithumb', 'binance', 'bybit']
+        else:
+            self.exchange_priority = list(self.exchanges.keys())
+
+    def _retry_request(self, func, max_retries=3, base_delay=1):
+        """Retry function with exponential backoff - adapted for Streamlit Cloud"""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise e
+
+                # Streamlit Cloud: longer delays
+                if self.is_streamlit_cloud:
+                    delay = base_delay * (3 ** attempt) + random.uniform(1, 3)
+                else:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+
+                print(
+                    f"Attempt {attempt + 1} failed, retrying in {delay:.2f}s...")
+                time.sleep(delay)
+
+    def _safe_fetch_ticker(self, exchange, symbol, exchange_name):
+        """Safely fetch ticker with retry mechanism"""
+        def fetch():
+            return exchange.fetch_ticker(symbol)
+
+        try:
+            return self._retry_request(fetch, max_retries=3, base_delay=2)
+        except Exception as e:
+            print(f"❌ {exchange_name} ticker fetch failed after retries: {str(e)}")
+            return None
+
+    def _safe_fetch_ohlcv(self, exchange, symbol, timeframe, limit, exchange_name):
+        """Safely fetch OHLCV with retry mechanism"""
+        def fetch():
+            return exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+
+        try:
+            return self._retry_request(fetch, max_retries=3, base_delay=2)
+        except Exception as e:
+            print(f"❌ {exchange_name} OHLCV fetch failed after retries: {str(e)}")
+            return None
+
+    def _safe_load_markets(self, exchange, exchange_name):
+        """Safely load markets with retry mechanism"""
+        def load():
+            return exchange.load_markets()
+
+        try:
+            return self._retry_request(load, max_retries=3, base_delay=1)
+        except Exception as e:
+            print(f"❌ {exchange_name} markets load failed after retries: {str(e)}")
+            return None
 
     def get_supported_symbols(self, base_coin: str = 'SOL') -> Dict[str, List[str]]:
         """Get supported symbols for each exchange"""
@@ -100,33 +203,39 @@ class ExchangeVolumeAnalyzer:
         volume_data = {}
         total_volume_usd = 0
 
-        # Fetch spot volume data
-        for exchange_name, exchange in self.exchanges.items():
-            try:
-                # Special debugging for Binance and Bybit
-                if exchange_name in ['binance', 'bybit']:
-                    print(
-                        f"🔍 Debug: Testing {exchange_name} 24h volume connection...")
-                    try:
-                        # Test basic connection first
-                        test_ticker = exchange.fetch_ticker('BTC/USDT')
-                        print(
-                            f"✅ {exchange_name} 24h connection test successful")
-                    except Exception as conn_error:
-                        print(
-                            f"❌ {exchange_name} 24h connection test failed: {str(conn_error)}")
-                        continue
+        # Fetch spot volume data - use priority order for Streamlit Cloud
+        for exchange_name in self.exchange_priority:
+            if exchange_name not in self.exchanges:
+                continue
 
-                markets = exchange.load_markets()
+            exchange = self.exchanges[exchange_name]
+            try:
+                print(f"🔍 Processing {exchange_name}...")
+
+                # Load markets safely
+                markets = self._safe_load_markets(exchange, exchange_name)
+                if not markets:
+                    print(
+                        f"⚠️ {exchange_name} markets not available, skipping...")
+                    continue
+
                 exchange_volume = 0
                 exchange_data = {}
 
                 # Get all pairs for the coin
                 coin_symbols = [s for s in markets if s.startswith(f'{coin}/')]
 
+                if not coin_symbols:
+                    print(f"⚠️ {exchange_name} does not support {coin} pairs")
+                    continue
+
                 for symbol in coin_symbols:
                     try:
-                        ticker = exchange.fetch_ticker(symbol)
+                        ticker = self._safe_fetch_ticker(
+                            exchange, symbol, exchange_name)
+                        if not ticker:
+                            continue
+
                         volume_24h = ticker.get('quoteVolume', 0) or ticker.get(
                             'baseVolume', 0) or 0
 
@@ -150,7 +259,7 @@ class ExchangeVolumeAnalyzer:
                             }
                     except Exception as e:
                         print(
-                            f"{exchange_name} {symbol} spot data fetch failed: {str(e)}")
+                            f"⚠️ {exchange_name} {symbol} spot data fetch failed: {str(e)}")
 
                 if exchange_volume > 0:
                     volume_data[exchange_name] = {
@@ -160,20 +269,24 @@ class ExchangeVolumeAnalyzer:
                         'spot_data': exchange_data
                     }
                     total_volume_usd += exchange_volume
+                    print(
+                        f"✅ {exchange_name} spot volume: ${exchange_volume:,.0f}")
 
             except Exception as e:
-                print(f"{exchange_name} spot volume fetch failed: {str(e)}")
-                # More detailed error info for problematic exchanges
-                if exchange_name in ['binance', 'bybit']:
-                    print(
-                        f"🔍 {exchange_name} 24h error details: {type(e).__name__}")
-                    if hasattr(e, 'response'):
-                        print(f"🔍 {exchange_name} 24h response: {e.response}")
+                print(f"❌ {exchange_name} spot volume fetch failed: {str(e)}")
+                continue
 
         # Fetch perpetual futures volume data
         for exchange_name, exchange in self.futures_exchanges.items():
             try:
-                markets = exchange.load_markets()
+                print(f"🔍 Processing {exchange_name} perpetual...")
+
+                markets = self._safe_load_markets(exchange, exchange_name)
+                if not markets:
+                    print(
+                        f"⚠️ {exchange_name} perpetual markets not available, skipping...")
+                    continue
+
                 perp_volume = 0
                 perp_data = {}
 
@@ -183,9 +296,18 @@ class ExchangeVolumeAnalyzer:
                     if f'{coin}/USDT' in symbol or f'{coin}:USDT' in symbol:
                         perp_symbols.append(symbol)
 
+                if not perp_symbols:
+                    print(
+                        f"⚠️ {exchange_name} does not support {coin} perpetual pairs")
+                    continue
+
                 for symbol in perp_symbols:
                     try:
-                        ticker = exchange.fetch_ticker(symbol)
+                        ticker = self._safe_fetch_ticker(
+                            exchange, symbol, exchange_name)
+                        if not ticker:
+                            continue
+
                         volume_24h = ticker.get('quoteVolume', 0) or ticker.get(
                             'baseVolume', 0) or 0
 
@@ -203,7 +325,7 @@ class ExchangeVolumeAnalyzer:
                             }
                     except Exception as e:
                         print(
-                            f"{exchange_name} {symbol} perp data fetch failed: {str(e)}")
+                            f"⚠️ {exchange_name} {symbol} perp data fetch failed: {str(e)}")
 
                 if perp_volume > 0:
                     # Add to existing exchange data or create new entry
@@ -219,9 +341,12 @@ class ExchangeVolumeAnalyzer:
                             'perp_data': perp_data
                         }
                     total_volume_usd += perp_volume
+                    print(
+                        f"✅ {exchange_name} perpetual volume: ${perp_volume:,.0f}")
 
             except Exception as e:
-                print(f"{exchange_name} perp volume fetch failed: {str(e)}")
+                print(f"❌ {exchange_name} perp volume fetch failed: {str(e)}")
+                continue
 
         return volume_data, total_volume_usd
 
@@ -243,6 +368,12 @@ class ExchangeVolumeAnalyzer:
             'kucoin': f'{coin}/USDT'
         }
 
+        # For Streamlit Cloud, limit days to avoid timeout
+        if self.is_streamlit_cloud and days > 14:
+            print(
+                "🔧 Streamlit Cloud detected - limiting to 14 days for better performance")
+            days = 14
+
         # Perpetual futures pairs
         perp_pairs = {
             'binance': f'{coin}/USDT',
@@ -251,37 +382,37 @@ class ExchangeVolumeAnalyzer:
             'kucoin': f'{coin}/USDT'
         }
 
-        # Fetch spot historical data
+        # Fetch spot historical data - use priority order for Streamlit Cloud
         successful_spot_exchanges = []
-        for exchange_name, symbol in spot_pairs.items():
+        for exchange_name in self.exchange_priority:
+            if exchange_name not in spot_pairs:
+                continue
+
+            symbol = spot_pairs[exchange_name]
             if exchange_name not in self.exchanges:
                 continue
 
             exchange = self.exchanges[exchange_name]
 
             try:
-                print(f"Fetching spot data from {exchange_name}...")
+                print(f"🔍 Fetching spot data from {exchange_name}...")
 
-                # Special debugging for Binance and Bybit
-                if exchange_name in ['binance', 'bybit']:
-                    print(f"🔍 Debug: Testing {exchange_name} connection...")
-                    try:
-                        # Test basic connection first
-                        test_ticker = exchange.fetch_ticker('BTC/USDT')
-                        print(f"✅ {exchange_name} connection test successful")
-                    except Exception as conn_error:
-                        print(
-                            f"❌ {exchange_name} connection test failed: {str(conn_error)}")
-                        continue
+                # Load markets safely
+                markets = self._safe_load_markets(exchange, exchange_name)
+                if not markets:
+                    print(
+                        f"⚠️ {exchange_name} markets not available, skipping...")
+                    continue
 
-                markets = exchange.load_markets()
                 if symbol not in markets:
-                    print(f"{exchange_name} does not support {symbol} (spot)")
+                    print(
+                        f"⚠️ {exchange_name} does not support {symbol} (spot)")
                     continue
 
                 # Fetch daily OHLCV data (excluding today)
                 print(f"📊 Fetching OHLCV from {exchange_name} for {symbol}...")
-                ohlcv_data = exchange.fetch_ohlcv(symbol, '1d', limit=days-1)
+                ohlcv_data = self._safe_fetch_ohlcv(
+                    exchange, symbol, '1d', days-1, exchange_name)
 
                 if ohlcv_data and len(ohlcv_data) > 0:
                     for ohlcv in ohlcv_data:
@@ -313,11 +444,7 @@ class ExchangeVolumeAnalyzer:
 
             except Exception as e:
                 print(f"❌ {exchange_name} spot data fetch failed: {str(e)}")
-                # More detailed error info for problematic exchanges
-                if exchange_name in ['binance', 'bybit']:
-                    print(f"🔍 {exchange_name} error details: {type(e).__name__}")
-                    if hasattr(e, 'response'):
-                        print(f"🔍 {exchange_name} response: {e.response}")
+                continue
 
         # Fetch perpetual futures historical data
         successful_perp_exchanges = []
@@ -328,8 +455,13 @@ class ExchangeVolumeAnalyzer:
             exchange = self.futures_exchanges[exchange_name]
 
             try:
-                print(f"Fetching perp data from {exchange_name}...")
-                markets = exchange.load_markets()
+                print(f"🔍 Fetching perp data from {exchange_name}...")
+
+                markets = self._safe_load_markets(exchange, exchange_name)
+                if not markets:
+                    print(
+                        f"⚠️ {exchange_name} perpetual markets not available, skipping...")
+                    continue
 
                 perp_symbol = None
                 for market_symbol in markets:
@@ -338,11 +470,12 @@ class ExchangeVolumeAnalyzer:
                         break
 
                 if not perp_symbol:
-                    print(f"{exchange_name} does not support {coin} perpetual")
+                    print(
+                        f"⚠️ {exchange_name} does not support {coin} perpetual")
                     continue
 
-                ohlcv_data = exchange.fetch_ohlcv(
-                    perp_symbol, '1d', limit=days-1)
+                ohlcv_data = self._safe_fetch_ohlcv(
+                    exchange, perp_symbol, '1d', days-1, exchange_name)
 
                 if ohlcv_data and len(ohlcv_data) > 0:
                     for ohlcv in ohlcv_data:
@@ -370,6 +503,7 @@ class ExchangeVolumeAnalyzer:
 
             except Exception as e:
                 print(f"❌ {exchange_name} perp data fetch failed: {str(e)}")
+                continue
 
         print(
             f"📊 Successfully fetched data from {len(successful_spot_exchanges)} spot exchanges and {len(successful_perp_exchanges)} perp exchanges")
@@ -381,8 +515,11 @@ class ExchangeVolumeAnalyzer:
         """Get current price from major exchanges"""
         prices = []
 
-        # Try to get current price from major exchanges
-        major_exchanges = ['binance', 'coinbase', 'kraken']
+        # Try to get current price from major exchanges - prioritize reliable ones for Streamlit Cloud
+        if self.is_streamlit_cloud:
+            major_exchanges = ['kraken', 'coinbase', 'okx', 'bybit', 'binance']
+        else:
+            major_exchanges = ['binance', 'coinbase', 'kraken', 'bybit', 'okx']
 
         for exchange_name in major_exchanges:
             if exchange_name not in self.exchanges:
@@ -396,80 +533,39 @@ class ExchangeVolumeAnalyzer:
                 if exchange_name == 'coinbase':
                     symbol = f'{coin}/USD'
 
-                ticker = exchange.fetch_ticker(symbol)
+                ticker = self._safe_fetch_ticker(
+                    exchange, symbol, exchange_name)
+                if not ticker:
+                    continue
+
                 current_price = ticker.get('last', 0)
 
                 if current_price > 0:
                     prices.append(current_price)
                     print(
-                        f"Current price from {exchange_name}: ${current_price}")
+                        f"✅ Current price from {exchange_name}: ${current_price}")
 
             except Exception as e:
                 print(
-                    f"Failed to get current price from {exchange_name}: {str(e)}")
+                    f"⚠️ Failed to get current price from {exchange_name}: {str(e)}")
                 continue
 
         if prices:
             # Return average price
             avg_price = sum(prices) / len(prices)
-            print(f"Average current price: ${avg_price}")
+            print(f"💰 Average current price: ${avg_price}")
             return avg_price
         else:
-            print("Could not fetch current price")
+            print("❌ Could not fetch current price from any exchange")
             return 0.0
 
     def get_today_data(self, coin: str = 'SOL') -> pd.DataFrame:
-        """Get today's data from 24h volume data"""
+        """Get today's data - return empty DataFrame to avoid inflated volume"""
         print(f"📊 Getting today's data for {coin}...")
-        today_data = []
-        today = datetime.now().date()
+        print("⚠️ Today's volume data excluded to avoid inflated comparisons")
 
-        # Get 24h volume data
-        volume_data, total_volume = self.fetch_24h_volume_data(coin)
-
-        if not volume_data:
-            return pd.DataFrame()
-
-        # Convert 24h data to today's format
-        for exchange_name, data in volume_data.items():
-            spot_volume = data.get('spot_volume_usd', 0)
-            perp_volume = data.get('perp_volume_usd', 0)
-            total_exchange_volume = data.get('total_volume_usd', 0)
-
-            # Get current price for this exchange
-            current_price = 0
-            if exchange_name in self.exchanges:
-                try:
-                    # Try to get price from the exchange
-                    if exchange_name in ['upbit', 'bithumb']:
-                        symbol = f'{coin}/KRW'
-                    elif exchange_name == 'coinbase':
-                        symbol = f'{coin}/USD'
-                    else:
-                        symbol = f'{coin}/USDT'
-
-                    ticker = self.exchanges[exchange_name].fetch_ticker(symbol)
-                    current_price = ticker.get('last', 0)
-                except:
-                    pass
-
-            # Add combined data (spot + perp for same exchange)
-            total_volume = spot_volume + perp_volume
-            if total_volume > 0:
-                today_data.append({
-                    'date': today,
-                    'exchange': exchange_name,
-                    'symbol': f'{coin}/USDT' if exchange_name != 'coinbase' else f'{coin}/USD',
-                    'volume_base': total_volume / current_price if current_price > 0 else 0,
-                    'volume_usd': total_volume,
-                    'open': current_price,
-                    'high': current_price,
-                    'low': current_price,
-                    'close': current_price,
-                    'type': 'combined'
-                })
-
-        return pd.DataFrame(today_data)
+        # Return empty DataFrame - we'll only use historical data for accurate comparison
+        return pd.DataFrame()
 
     def calculate_daily_market_share(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate daily market share by exchange"""

@@ -1,11 +1,25 @@
+from main import ExchangeVolumeAnalyzer
 import streamlit as st
 import pandas as pd
 import plotly.graph_objs as go
 from datetime import datetime, timedelta
 from plotly.subplots import make_subplots
 import time
+import os
 
-from main import ExchangeVolumeAnalyzer
+# Configure for better deployment stability
+os.environ['CCXT_ASYNC'] = 'false'  # Disable async for better compatibility
+os.environ['CCXT_RETRY'] = 'true'   # Enable retry mechanism
+
+# Streamlit Cloud specific configurations
+if os.environ.get('STREAMLIT_SERVER_PORT'):
+    st.info(
+        "🔧 Running on Streamlit Cloud - using optimized settings for better reliability")
+    # Set longer timeouts for Streamlit Cloud
+    st.session_state.streamlit_cloud = True
+else:
+    st.session_state.streamlit_cloud = False
+
 
 st.set_page_config(page_title="Exchange Dominance Dashboard", layout="wide")
 st.title("Exchange Dominance & Price Dashboard")
@@ -44,16 +58,12 @@ if ticker:
             status_text.text("🔄 Processing and combining data...")
             progress_bar.progress(80)
 
-            # Combine historical and today's data
-            if not today_df.empty:
-                combined_df = pd.concat(
-                    [historical_df, today_df], ignore_index=True)
-                st.success(
-                    f"✅ Combined {len(historical_df)} historical records + {len(today_df)} today records")
-            else:
-                combined_df = historical_df
-                st.warning(
-                    f"⚠️ Using {len(historical_df)} historical records only (today's data unavailable)")
+            # Use only historical data for accurate comparison
+            combined_df = historical_df
+            st.success(
+                f"✅ Using {len(historical_df)} historical records for accurate comparison")
+            st.info(
+                "💡 Today's volume data excluded to avoid inflated comparisons with 24h data")
 
             progress_bar.progress(100)
             status_text.text("🎉 Data processing complete!")
@@ -63,7 +73,20 @@ if ticker:
 
     except Exception as e:
         st.error(f"❌ Error fetching data: {str(e)}")
-        st.info("💡 Try refreshing the page or check your internet connection.")
+
+        if st.session_state.get('streamlit_cloud', False):
+            st.warning("🌐 Streamlit Cloud Environment Detected")
+            st.info(
+                "💡 Streamlit Cloud has network restrictions that may affect API calls.")
+            st.info(
+                "🔧 The app uses optimized settings and retry mechanisms for better reliability.")
+            st.info(
+                "⏱️ Please wait 30-60 seconds between requests to avoid rate limiting.")
+        else:
+            st.info(
+                "💡 This might be due to network issues or API rate limits. Try refreshing the page in a few moments.")
+
+        st.info("🔧 If the problem persists, try a different token or check if the token is listed on major exchanges.")
         st.stop()
 
     if not combined_df.empty:
@@ -85,6 +108,8 @@ if ticker:
             ex for ex in expected_exchanges if ex not in available_exchanges]
         if missing_exchanges:
             st.warning(f"⚠️ Missing data for: {', '.join(missing_exchanges)}")
+            st.info(
+                "💡 This is normal for some tokens or during high traffic periods. The app will work with available data.")
 
         # Dominance (market share) calculation
         share_df = analyzer.calculate_daily_market_share(combined_df)
@@ -115,9 +140,18 @@ if ticker:
                 price_df.loc[today] = current_price
                 st.success(f"💰 Current price: ${current_price:,.4f}")
             else:
-                st.warning("⚠️ Could not fetch current price")
+                st.warning(
+                    "⚠️ Could not fetch current price - using latest historical price")
+                # Use the latest available price from historical data
+                if not price_df.empty:
+                    latest_price = price_df['close'].iloc[-1]
+                    st.info(f"📊 Latest available price: ${latest_price:,.4f}")
         except Exception as e:
             st.warning(f"⚠️ Error fetching current price: {str(e)}")
+            # Use the latest available price from historical data
+            if not price_df.empty:
+                latest_price = price_df['close'].iloc[-1]
+                st.info(f"📊 Latest available price: ${latest_price:,.4f}")
 
         krw_exchanges = ['upbit', 'bithumb']
         exchange_colors = {
@@ -210,7 +244,7 @@ if ticker:
 
         total_kr_non_kr_vol = grouped_vol['KR'] + grouped_vol['Non-KR']
 
-        # 1-2. KR vs Non-KR Dominance(%) + 전체 거래량 area (subplot)
+        # 1-2. KR vs Non-KR Dominance(%) + 전체 거래량 bar chart (subplot)
         mode_title = "Spot Only" if volume_mode == "Spot Only" else "Spot + Perp"
         st.subheader(
             f"KR vs Non-KR: Dominance (%) & Total Volume ({mode_title})")
@@ -221,7 +255,7 @@ if ticker:
 
         fig_spot_perp = make_subplots(
             rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05,
-            subplot_titles=("Dominance (%)", "Total Volume (USD)"),
+            subplot_titles=("Dominance (%)", "Total Volume (USD) - Bar Chart"),
             specs=[[{"secondary_y": True}], [{}]]
         )
         # Row 1: Dominance stacked bar (y1) + close price (y2)
@@ -251,15 +285,13 @@ if ticker:
                 line=dict(color='black', width=2),
                 yaxis='y2'
             ), row=1, col=1, secondary_y=True)
-        # Row 2: 전체 거래량 area (단일)
-        fig_spot_perp.add_trace(go.Scatter(
+        # Row 2: 전체 거래량 bar chart (단일)
+        fig_spot_perp.add_trace(go.Bar(
             x=total_kr_non_kr_vol.index.astype(str),
             y=total_kr_non_kr_vol,
             name='Total Volume',
-            fill='tozeroy',
-            mode='none',
-            fillcolor='rgba(44, 160, 101, 0.3)',
-            opacity=1.0
+            marker_color='rgba(44, 160, 101, 0.8)',
+            opacity=0.8
         ), row=2, col=1)
 
         fig_spot_perp.update_layout(
@@ -278,12 +310,12 @@ if ticker:
             rangeslider=dict(visible=False), row=1, col=1)
         st.plotly_chart(fig_spot_perp, use_container_width=True)
 
-        # 3-4. CEX별 Dominance(%) + 전체 거래량 area (subplot)
+        # 3-4. CEX별 Dominance(%) + 전체 거래량 bar chart (subplot)
         st.subheader("Exchange: Dominance (%) & Total Volume")
         total_cex_vol = volume_pivot.sum(axis=1)
         fig_cex = make_subplots(
             rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05,
-            subplot_titles=("Dominance (%)", "Total Volume (USD)"),
+            subplot_titles=("Dominance (%)", "Total Volume (USD) - Bar Chart"),
             specs=[[{"secondary_y": True}], [{}]]
         )
         # Row 1: Dominance stacked bar (y1) + close price (y2)
@@ -312,15 +344,13 @@ if ticker:
                 yaxis='y2'
             )
             fig_cex.add_trace(price_trace, row=1, col=1, secondary_y=True)
-        # Row 2: 전체 거래량 area (단일)
-        fig_cex.add_trace(go.Scatter(
+        # Row 2: 전체 거래량 bar chart (단일)
+        fig_cex.add_trace(go.Bar(
             x=total_cex_vol.index.astype(str),
             y=total_cex_vol,
             name='Total Volume',
-            fill='tozeroy',
-            mode='none',
-            fillcolor='rgba(44, 160, 101, 0.3)',
-            opacity=1.0
+            marker_color='rgba(44, 160, 101, 0.8)',
+            opacity=0.8
         ), row=2, col=1)
 
         fig_cex.update_layout(
