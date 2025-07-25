@@ -592,11 +592,12 @@ class ExchangeVolumeAnalyzer:
                 if ohlcv_data and len(ohlcv_data) > 0:
                     for ohlcv in ohlcv_data:
                         timestamp, open_price, high, low, close, volume = ohlcv
-                        # Fix timezone issue for Bithumb (KST to UTC)
+                        # Fix timezone issue for Bithumb
                         if exchange_name == 'bithumb':
-                            # Bithumb returns KST time, convert to UTC by subtracting 9 hours
+                            # Bithumb returns UTC time but with different day boundary
+                            # Add 9 hours to align with other exchanges
                             date = datetime.fromtimestamp(
-                                (timestamp - 9 * 3600 * 1000) / 1000).date()
+                                (timestamp + 9 * 3600 * 1000) / 1000).date()
                         else:
                             date = datetime.fromtimestamp(
                                 timestamp / 1000).date()
@@ -662,11 +663,12 @@ class ExchangeVolumeAnalyzer:
                 if ohlcv_data and len(ohlcv_data) > 0:
                     for ohlcv in ohlcv_data:
                         timestamp, open_price, high, low, close, volume = ohlcv
-                        # Fix timezone issue for Bithumb (KST to UTC)
+                        # Fix timezone issue for Bithumb
                         if exchange_name == 'bithumb':
-                            # Bithumb returns KST time, convert to UTC by subtracting 9 hours
+                            # Bithumb returns UTC time but with different day boundary
+                            # Add 9 hours to align with other exchanges
                             date = datetime.fromtimestamp(
-                                (timestamp - 9 * 3600 * 1000) / 1000).date()
+                                (timestamp + 9 * 3600 * 1000) / 1000).date()
                         else:
                             date = datetime.fromtimestamp(
                                 timestamp / 1000).date()
