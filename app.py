@@ -42,6 +42,10 @@ if ticker:
 
     try:
         with st.spinner(f"Fetching data for {ticker} ({days} days)..."):
+            # Clear previous error tracking
+            analyzer.api_errors.clear()
+            analyzer.connection_status.clear()
+
             status_text.text("📈 Fetching historical data...")
             progress_bar.progress(30)
 
@@ -100,13 +104,56 @@ if ticker:
         available_exchanges = combined_df['exchange'].unique()
         st.success(f"✅ Data available for: {', '.join(available_exchanges)}")
 
-        # Show missing exchanges
+        # Show API connection summary
+        api_summary = analyzer.get_api_errors_summary()
+        if api_summary['failed_exchanges'] > 0:
+            st.info(
+                f"📊 API Connection Summary: {api_summary['successful_exchanges']} successful, {api_summary['failed_exchanges']} failed out of {api_summary['total_exchanges']} exchanges")
+
+        # Show missing exchanges with detailed error information
         expected_exchanges = ['binance', 'bybit', 'okx',
                               'kucoin', 'coinbase', 'kraken', 'upbit', 'bithumb']
         missing_exchanges = [
             ex for ex in expected_exchanges if ex not in available_exchanges]
         if missing_exchanges:
             st.warning(f"⚠️ Missing data for: {', '.join(missing_exchanges)}")
+
+            # Get detailed error information
+            missing_info = analyzer.get_missing_exchanges_with_reasons()
+
+            if missing_info:
+                st.subheader("🔍 API Connection Issues Details")
+
+                for exchange_name, error_info in missing_info.items():
+                    if exchange_name in missing_exchanges:
+                        with st.expander(f"❌ {exchange_name.upper()} - {error_info['error_type']}"):
+                            st.write(
+                                f"**Error Type:** {error_info['error_type']}")
+                            st.write(
+                                f"**Operation:** {error_info['operation']}")
+                            st.write(f"**Reason:** {error_info['reason']}")
+                            if error_info.get('status_code'):
+                                st.write(
+                                    f"**HTTP Status:** {error_info['status_code']}")
+                            st.write(f"**Time:** {error_info['timestamp']}")
+
+                            # Provide specific suggestions based on error type
+                            if 'timeout' in error_info['reason'].lower():
+                                st.info(
+                                    "💡 **Suggestion:** This appears to be a timeout issue. Try refreshing the page or wait a few minutes.")
+                            elif 'rate limit' in error_info['reason'].lower():
+                                st.info(
+                                    "💡 **Suggestion:** Rate limit exceeded. Please wait 30-60 seconds before trying again.")
+                            elif '403' in str(error_info.get('status_code', '')):
+                                st.info(
+                                    "💡 **Suggestion:** Access forbidden. This might be due to IP restrictions.")
+                            elif '429' in str(error_info.get('status_code', '')):
+                                st.info(
+                                    "💡 **Suggestion:** Too many requests. Please wait before trying again.")
+                            else:
+                                st.info(
+                                    "💡 **Suggestion:** This might be due to network issues or API changes. Try refreshing the page.")
+
             st.info(
                 "💡 This is normal for some tokens or during high traffic periods. The app will work with available data.")
 

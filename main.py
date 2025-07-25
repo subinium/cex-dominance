@@ -20,6 +20,10 @@ class ExchangeVolumeAnalyzer:
         self.is_streamlit_cloud = os.environ.get(
             'STREAMLIT_SERVER_PORT') is not None
 
+        # Error tracking for UI display
+        self.api_errors = {}
+        self.connection_status = {}
+
         # Enhanced headers for all environments
         self.enhanced_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -222,9 +226,13 @@ class ExchangeVolumeAnalyzer:
             return exchange.fetch_ticker(symbol)
 
         try:
-            return self._retry_request(fetch, max_retries=3, base_delay=2)
+            result = self._retry_request(fetch, max_retries=3, base_delay=2)
+            if result:
+                self._track_success(exchange_name, f"fetch_ticker({symbol})")
+            return result
         except Exception as e:
             print(f"❌ {exchange_name} ticker fetch failed after retries: {str(e)}")
+            self._track_error(exchange_name, f"fetch_ticker({symbol})", e)
             return None
 
     def _safe_fetch_ohlcv(self, exchange, symbol, timeframe, limit, exchange_name):
@@ -233,9 +241,15 @@ class ExchangeVolumeAnalyzer:
             return exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 
         try:
-            return self._retry_request(fetch, max_retries=3, base_delay=2)
+            result = self._retry_request(fetch, max_retries=3, base_delay=2)
+            if result:
+                self._track_success(
+                    exchange_name, f"fetch_ohlcv({symbol}, {timeframe})")
+            return result
         except Exception as e:
             print(f"❌ {exchange_name} OHLCV fetch failed after retries: {str(e)}")
+            self._track_error(
+                exchange_name, f"fetch_ohlcv({symbol}, {timeframe})", e)
             return None
 
     def _safe_load_markets(self, exchange, exchange_name):
@@ -244,10 +258,96 @@ class ExchangeVolumeAnalyzer:
             return exchange.load_markets()
 
         try:
-            return self._retry_request(load, max_retries=3, base_delay=1)
+            result = self._retry_request(load, max_retries=3, base_delay=1)
+            if result:
+                self._track_success(exchange_name, "load_markets")
+            return result
         except Exception as e:
             print(f"❌ {exchange_name} markets load failed after retries: {str(e)}")
+            self._track_error(exchange_name, "load_markets", e)
             return None
+
+    def _track_error(self, exchange_name: str, operation: str, error: Exception):
+        """Track detailed error information for UI display"""
+        error_info = {
+            'exchange': exchange_name,
+            'operation': operation,
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'timestamp': datetime.now().isoformat(),
+            'is_streamlit_cloud': self.is_streamlit_cloud
+        }
+
+        # Add more specific error details
+        if hasattr(error, 'response'):
+            error_info['status_code'] = getattr(
+                error.response, 'status_code', None)
+            error_info['response_text'] = getattr(error.response, 'text', None)
+
+        if hasattr(error, 'args') and error.args:
+            error_info['error_args'] = str(error.args)
+
+        # Store error by exchange
+        if exchange_name not in self.api_errors:
+            self.api_errors[exchange_name] = []
+        self.api_errors[exchange_name].append(error_info)
+
+        # Update connection status
+        self.connection_status[exchange_name] = {
+            'status': 'failed',
+            'last_error': error_info,
+            'last_attempt': datetime.now().isoformat()
+        }
+
+    def _track_success(self, exchange_name: str, operation: str):
+        """Track successful operations"""
+        self.connection_status[exchange_name] = {
+            'status': 'success',
+            'last_operation': operation,
+            'last_attempt': datetime.now().isoformat()
+        }
+
+    def get_api_errors_summary(self) -> dict:
+        """Get summary of API errors for UI display"""
+        summary = {
+            'total_exchanges': len(self.exchanges),
+            'successful_exchanges': 0,
+            'failed_exchanges': 0,
+            'error_details': {},
+            'connection_status': self.connection_status.copy()
+        }
+
+        for exchange_name in self.exchanges.keys():
+            if exchange_name in self.api_errors:
+                summary['failed_exchanges'] += 1
+                summary['error_details'][exchange_name] = {
+                    'error_count': len(self.api_errors[exchange_name]),
+                    'last_error': self.api_errors[exchange_name][-1] if self.api_errors[exchange_name] else None,
+                    'all_errors': self.api_errors[exchange_name]
+                }
+            else:
+                summary['successful_exchanges'] += 1
+
+        return summary
+
+    def get_missing_exchanges_with_reasons(self) -> dict:
+        """Get detailed information about missing exchanges and why they failed"""
+        missing_info = {}
+
+        for exchange_name in self.exchanges.keys():
+            if exchange_name in self.api_errors:
+                errors = self.api_errors[exchange_name]
+                if errors:
+                    last_error = errors[-1]
+                    missing_info[exchange_name] = {
+                        'reason': last_error['error_message'],
+                        'error_type': last_error['error_type'],
+                        'status_code': last_error.get('status_code'),
+                        'operation': last_error['operation'],
+                        'timestamp': last_error['timestamp']
+                    }
+
+        return missing_info
 
     def get_supported_symbols(self, base_coin: str = 'SOL') -> Dict[str, List[str]]:
         """Get supported symbols for each exchange"""
