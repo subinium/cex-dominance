@@ -11,12 +11,10 @@ import os
 os.environ['CCXT_ASYNC'] = 'false'  # Disable async for better compatibility
 os.environ['CCXT_RETRY'] = 'true'   # Enable retry mechanism
 
-# Streamlit Cloud specific configurations
+# Environment detection
 if os.environ.get('STREAMLIT_SERVER_PORT'):
     st.info(
-        "🔧 Running on Streamlit Cloud - using optimized settings and alternative APIs for better reliability")
-    st.info("🔄 Using public APIs as fallback to bypass server restrictions")
-    # Set longer timeouts for Streamlit Cloud
+        "🔧 Running on Streamlit Cloud - using optimized settings for better reliability")
     st.session_state.streamlit_cloud = True
 else:
     st.session_state.streamlit_cloud = False
@@ -80,9 +78,7 @@ if ticker:
             st.info(
                 "💡 Streamlit Cloud has network restrictions that may affect API calls.")
             st.info(
-                "🔧 The app uses optimized settings, retry mechanisms, and public APIs for better reliability.")
-            st.info(
-                "🔄 Trying alternative data sources to bypass server restrictions...")
+                "🔧 The app uses optimized settings and enhanced headers for better reliability.")
             st.info(
                 "⏱️ Please wait 30-60 seconds between requests to avoid rate limiting.")
         else:
