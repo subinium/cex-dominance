@@ -27,11 +27,14 @@ st.title("Exchange Dominance & Price Dashboard")
 if 'analyzer' not in st.session_state:
     st.session_state.analyzer = ExchangeVolumeAnalyzer()
 
-# Ticker input
-ticker = st.text_input("Enter token ticker (e.g., SOL, PENGU):", value="PENGU")
+# Ticker input with auto-formatting
+ticker_input = st.text_input(
+    "Enter token ticker (e.g., SOL, PENGU):", value="PENGU")
+# Auto-format ticker: uppercase and remove spaces
+ticker = ticker_input.strip().upper() if ticker_input else ""
 # Period input
 days = st.number_input("Select period (days)", min_value=2,
-                       max_value=60, value=14, step=1)
+                       max_value=365, value=14, step=1)
 
 if ticker:
     analyzer = st.session_state.analyzer
@@ -292,8 +295,14 @@ if ticker:
 
         # 1-2. KR vs Non-KR Dominance(%) + 전체 거래량 bar chart (subplot)
         mode_title = "Spot Only" if volume_mode == "Spot Only" else "Spot + Perp"
+
+        # Get available exchanges for description
+        available_exchanges = combined_df['exchange'].unique()
+        exchange_list = ", ".join(sorted(available_exchanges))
+
         st.subheader(
-            f"KR vs Non-KR: Dominance (%) & Total Volume ({mode_title})")
+            f"{ticker} - KR vs Non-KR: Dominance (%) & Total Volume ({mode_title})")
+        st.caption(f"📊 Data from: {exchange_list}")
 
         # Display current price
         if current_price > 0:
@@ -357,7 +366,7 @@ if ticker:
         st.plotly_chart(fig_spot_perp, use_container_width=True)
 
         # 3-4. CEX별 Dominance(%) + 전체 거래량 bar chart (subplot)
-        st.subheader("Exchange: Dominance (%) & Total Volume")
+        st.subheader(f"{ticker} - Exchange: Dominance (%) & Total Volume")
         total_cex_vol = volume_pivot.sum(axis=1)
         fig_cex = make_subplots(
             rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05,
@@ -414,7 +423,7 @@ if ticker:
         st.plotly_chart(fig_cex, use_container_width=True)
 
         # Table: Exchange volume (moved below charts)
-        st.subheader(f"{days}-Day Exchange Volume Table for {ticker}")
+        st.subheader(f"{ticker} - {days}-Day Exchange Volume Table")
         volume_table = combined_df.pivot(
             index='date', columns='exchange', values='volume_usd').fillna(0).round(2)
         st.dataframe(volume_table)

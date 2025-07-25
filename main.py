@@ -592,7 +592,14 @@ class ExchangeVolumeAnalyzer:
                 if ohlcv_data and len(ohlcv_data) > 0:
                     for ohlcv in ohlcv_data:
                         timestamp, open_price, high, low, close, volume = ohlcv
-                        date = datetime.fromtimestamp(timestamp / 1000).date()
+                        # Fix timezone issue for Bithumb (KST to UTC)
+                        if exchange_name == 'bithumb':
+                            # Bithumb returns KST time, convert to UTC by subtracting 9 hours
+                            date = datetime.fromtimestamp(
+                                (timestamp - 9 * 3600 * 1000) / 1000).date()
+                        else:
+                            date = datetime.fromtimestamp(
+                                timestamp / 1000).date()
 
                         if symbol.endswith('/KRW'):
                             volume_usd = volume * close / 1350
@@ -655,7 +662,14 @@ class ExchangeVolumeAnalyzer:
                 if ohlcv_data and len(ohlcv_data) > 0:
                     for ohlcv in ohlcv_data:
                         timestamp, open_price, high, low, close, volume = ohlcv
-                        date = datetime.fromtimestamp(timestamp / 1000).date()
+                        # Fix timezone issue for Bithumb (KST to UTC)
+                        if exchange_name == 'bithumb':
+                            # Bithumb returns KST time, convert to UTC by subtracting 9 hours
+                            date = datetime.fromtimestamp(
+                                (timestamp - 9 * 3600 * 1000) / 1000).date()
+                        else:
+                            date = datetime.fromtimestamp(
+                                timestamp / 1000).date()
                         volume_usd = volume * close
 
                         historical_data.append({
