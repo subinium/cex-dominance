@@ -20,9 +20,23 @@ class ExchangeVolumeAnalyzer:
         self.is_streamlit_cloud = os.environ.get(
             'STREAMLIT_SERVER_PORT') is not None
 
+        # Alternative data sources for Streamlit Cloud
+        self.use_alternative_sources = self.is_streamlit_cloud
+
+        # Public API endpoints as fallback
+        self.public_apis = {
+            'binance': 'https://api.binance.com/api/v3',
+            'bybit': 'https://api.bybit.com/v2',
+            'coinbase': 'https://api.pro.coinbase.com',
+            'kraken': 'https://api.kraken.com/0',
+            'okx': 'https://www.okx.com/api/v5',
+            'kucoin': 'https://api.kucoin.com/api/v1'
+        }
+
         # Streamlit Cloud specific settings
         if self.is_streamlit_cloud:
             print("🔧 Detected Streamlit Cloud environment - applying optimized settings")
+            print("🔄 Using alternative data sources to bypass restrictions")
             # More conservative settings for Streamlit Cloud
             common_config = {
                 'enableRateLimit': True,
@@ -142,7 +156,7 @@ class ExchangeVolumeAnalyzer:
                 time.sleep(delay)
 
     def _safe_fetch_ticker(self, exchange, symbol, exchange_name):
-        """Safely fetch ticker with retry mechanism"""
+        """Safely fetch ticker with retry mechanism and fallback to public API"""
         def fetch():
             return exchange.fetch_ticker(symbol)
 
@@ -150,6 +164,17 @@ class ExchangeVolumeAnalyzer:
             return self._retry_request(fetch, max_retries=3, base_delay=2)
         except Exception as e:
             print(f"❌ {exchange_name} ticker fetch failed after retries: {str(e)}")
+
+            # Try public API as fallback for Streamlit Cloud
+            if self.use_alternative_sources:
+                print(f"🔄 Trying public API for {exchange_name}...")
+                if exchange_name == 'binance':
+                    return self._get_binance_public_data(symbol)
+                elif exchange_name == 'bybit':
+                    return self._get_bybit_public_data(symbol)
+                elif exchange_name == 'kraken':
+                    return self._get_kraken_public_data(symbol)
+
             return None
 
     def _safe_fetch_ohlcv(self, exchange, symbol, timeframe, limit, exchange_name):
@@ -173,6 +198,81 @@ class ExchangeVolumeAnalyzer:
         except Exception as e:
             print(f"❌ {exchange_name} markets load failed after retries: {str(e)}")
             return None
+
+    def _make_public_api_request(self, exchange: str, endpoint: str, params: dict = None) -> dict:
+        """Make request to public API endpoints as fallback"""
+        try:
+            base_url = self.public_apis.get(exchange)
+            if not base_url:
+                return None
+
+            url = f"{base_url}/{endpoint}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+
+            response = requests.get(
+                url, params=params, headers=headers, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"⚠️ Public API request failed for {exchange}: {str(e)}")
+            return None
+
+    def _get_binance_public_data(self, symbol: str) -> dict:
+        """Get Binance data using public API"""
+        try:
+            # Get 24hr ticker
+            ticker_data = self._make_public_api_request(
+                'binance', 'ticker/24hr', {'symbol': symbol.replace('/', '')})
+            if ticker_data:
+                return {
+                    'volume': float(ticker_data.get('volume', 0)),
+                    'quoteVolume': float(ticker_data.get('quoteVolume', 0)),
+                    'lastPrice': float(ticker_data.get('lastPrice', 0)),
+                    'priceChangePercent': float(ticker_data.get('priceChangePercent', 0))
+                }
+        except Exception as e:
+            print(f"⚠️ Binance public API failed: {str(e)}")
+        return None
+
+    def _get_bybit_public_data(self, symbol: str) -> dict:
+        """Get Bybit data using public API"""
+        try:
+            # Get ticker data
+            ticker_data = self._make_public_api_request(
+                'bybit', 'public/tickers', {'symbol': symbol.replace('/', '')})
+            if ticker_data and ticker_data.get('ret_code') == 0:
+                result = ticker_data.get('result', [])
+                if result:
+                    data = result[0]
+                    return {
+                        'volume': float(data.get('volume_24h', 0)),
+                        'last_price': float(data.get('last_price', 0)),
+                        'prev_price_24h': float(data.get('prev_price_24h', 0))
+                    }
+        except Exception as e:
+            print(f"⚠️ Bybit public API failed: {str(e)}")
+        return None
+
+    def _get_kraken_public_data(self, symbol: str) -> dict:
+        """Get Kraken data using public API"""
+        try:
+            # Get ticker data
+            ticker_data = self._make_public_api_request(
+                'kraken', 'public/Ticker', {'pair': symbol})
+            if ticker_data and ticker_data.get('error') == []:
+                result = ticker_data.get('result', {})
+                if result:
+                    # Kraken returns data with different key format
+                    for key, data in result.items():
+                        return {
+                            'volume': float(data.get('v', [0])[1] if isinstance(data.get('v'), list) else 0),
+                            'last_price': float(data.get('c', [0])[0] if isinstance(data.get('c'), list) else 0)
+                        }
+        except Exception as e:
+            print(f"⚠️ Kraken public API failed: {str(e)}")
+        return None
 
     def get_supported_symbols(self, base_coin: str = 'SOL') -> Dict[str, List[str]]:
         """Get supported symbols for each exchange"""
@@ -512,7 +612,7 @@ class ExchangeVolumeAnalyzer:
         return df
 
     def get_current_price(self, coin: str = 'SOL') -> float:
-        """Get current price from major exchanges"""
+        """Get current price from major exchanges with fallback to public APIs"""
         prices = []
 
         # Try to get current price from major exchanges - prioritize reliable ones for Streamlit Cloud
@@ -550,13 +650,47 @@ class ExchangeVolumeAnalyzer:
                     f"⚠️ Failed to get current price from {exchange_name}: {str(e)}")
                 continue
 
+        # If no prices from CCXT, try public APIs directly
+        if not prices and self.use_alternative_sources:
+            print("🔄 Trying public APIs directly for price data...")
+
+            # Try Binance public API
+            try:
+                binance_data = self._get_binance_public_data(f'{coin}/USDT')
+                if binance_data and binance_data.get('lastPrice', 0) > 0:
+                    prices.append(binance_data['lastPrice'])
+                    print(
+                        f"✅ Current price from Binance public API: ${binance_data['lastPrice']}")
+            except Exception as e:
+                print(f"⚠️ Binance public API failed: {str(e)}")
+
+            # Try Bybit public API
+            try:
+                bybit_data = self._get_bybit_public_data(f'{coin}/USDT')
+                if bybit_data and bybit_data.get('last_price', 0) > 0:
+                    prices.append(bybit_data['last_price'])
+                    print(
+                        f"✅ Current price from Bybit public API: ${bybit_data['last_price']}")
+            except Exception as e:
+                print(f"⚠️ Bybit public API failed: {str(e)}")
+
+            # Try Kraken public API
+            try:
+                kraken_data = self._get_kraken_public_data(f'{coin}/USDT')
+                if kraken_data and kraken_data.get('last_price', 0) > 0:
+                    prices.append(kraken_data['last_price'])
+                    print(
+                        f"✅ Current price from Kraken public API: ${kraken_data['last_price']}")
+            except Exception as e:
+                print(f"⚠️ Kraken public API failed: {str(e)}")
+
         if prices:
             # Return average price
             avg_price = sum(prices) / len(prices)
             print(f"💰 Average current price: ${avg_price}")
             return avg_price
         else:
-            print("❌ Could not fetch current price from any exchange")
+            print("❌ Could not fetch current price from any exchange or public API")
             return 0.0
 
     def get_today_data(self, coin: str = 'SOL') -> pd.DataFrame:
