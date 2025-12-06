@@ -15,16 +15,25 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { VolumeData, KRW_EXCHANGES, EXCHANGE_COLORS } from '@/types';
+import { fetchMissingExchangeData, ClientVolumeData } from '@/lib/clientExchanges';
 
 type VolumeMode = 'spot' | 'spot+perp';
 type TimeFrame = 'D' | 'W' | 'M';
 type RefTab = 'BTC' | 'ETH';
+
+interface FetchedPair {
+  exchange: string;
+  symbol: string;
+  type: 'spot' | 'perp';
+  records: number;
+}
 
 interface ApiResponse {
   success: boolean;
   data?: VolumeData[];
   currentPrice?: number;
   error?: string;
+  fetchedPairs?: FetchedPair[];
 }
 
 interface RefData {
@@ -261,6 +270,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<VolumeData[]>([]);
+  const [fetchedPairs, setFetchedPairs] = useState<FetchedPair[]>([]);
   const [currentPrice, setCurrentPrice] = useState<number>(0);
   const [isDark, setIsDark] = useState(false);
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
@@ -321,7 +331,7 @@ export default function Home() {
 
     const progressInterval = setInterval(() => {
       setLoadingProgress((prev) => {
-        const newProgress = Math.min(prev + Math.random() * 15, 90);
+        const newProgress = Math.min(prev + Math.random() * 15, 85);
         const messageIndex = Math.min(Math.floor(newProgress / 20), LOADING_MESSAGES.length - 1);
         setLoadingMessage(LOADING_MESSAGES[messageIndex]);
         return newProgress;
@@ -329,20 +339,71 @@ export default function Home() {
     }, 800);
 
     try {
+      // Step 1: Fetch from server API
       const res = await fetch(`/api/dominance?ticker=${ticker}&days=${days}`);
       const json: ApiResponse = await res.json();
 
-      clearInterval(progressInterval);
-      setLoadingProgress(100);
-      setLoadingMessage('Complete');
-
       if (!json.success) {
+        clearInterval(progressInterval);
+        setLoadingProgress(100);
+        setLoadingMessage('Complete');
         setError(json.error || 'Failed to fetch data');
         setData([]);
         return;
       }
 
-      setData(json.data || []);
+      let allData = json.data || [];
+      let allPairs = json.fetchedPairs || [];
+
+      // Step 2: Check for missing exchanges and fetch from client-side
+      const existingExchanges = new Set(allData.map(d => d.exchange));
+      const missingExchanges: string[] = [];
+
+      if (!existingExchanges.has('binance')) missingExchanges.push('binance');
+      if (!existingExchanges.has('binance_perp')) missingExchanges.push('binance_perp');
+      if (!existingExchanges.has('bybit')) missingExchanges.push('bybit');
+      if (!existingExchanges.has('bybit_perp')) missingExchanges.push('bybit_perp');
+
+      if (missingExchanges.length > 0) {
+        console.log(`🔄 Missing exchanges: ${missingExchanges.join(', ')} - fetching from client...`);
+        setLoadingMessage('Fetching geo-blocked exchanges...');
+
+        try {
+          const clientData = await fetchMissingExchangeData(ticker, days, existingExchanges);
+
+          if (clientData.length > 0) {
+            // Merge client data with server data
+            allData = [...allData, ...clientData as unknown as VolumeData[]];
+
+            // Create pairs info for client-fetched data
+            const clientPairsMap = new Map<string, FetchedPair>();
+            for (const d of clientData) {
+              const key = `${d.exchange}-${d.symbol}`;
+              if (!clientPairsMap.has(key)) {
+                clientPairsMap.set(key, {
+                  exchange: d.exchange,
+                  symbol: d.symbol,
+                  type: d.type,
+                  records: 0
+                });
+              }
+              clientPairsMap.get(key)!.records++;
+            }
+            allPairs = [...allPairs, ...Array.from(clientPairsMap.values())];
+
+            console.log(`✅ Client fetched ${clientData.length} additional records`);
+          }
+        } catch (clientError) {
+          console.warn('Client-side fetch failed:', clientError);
+        }
+      }
+
+      clearInterval(progressInterval);
+      setLoadingProgress(100);
+      setLoadingMessage('Complete');
+
+      setData(allData);
+      setFetchedPairs(allPairs);
       setCurrentPrice(json.currentPrice || 0);
     } catch (err) {
       clearInterval(progressInterval);
@@ -1065,15 +1126,40 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="border-t mt-8 px-4 py-4" style={{ borderColor: 'var(--border)' }}>
-        <div className="max-w-[1800px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-          <span>Binance · Coinbase · Kraken · OKX · Bybit · KuCoin · Upbit · Bithumb · <span style={{ color: 'var(--text-secondary)' }}>UTC</span></span>
-          <span>
-            Built by{' '}
-            <a href="https://twitter.com/cptn3mox" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--text-secondary)' }}>@cptn3mox</a>
-            {' & '}
-            <a href="https://twitter.com/subinium" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--text-secondary)' }}>@subinium</a>
-          </span>
+      <footer className="border-t mt-8 px-4 py-6" style={{ borderColor: 'var(--border)' }}>
+        <div className="max-w-[1800px] mx-auto space-y-4">
+          {/* Fetched Pairs Info */}
+          {fetchedPairs.length > 0 && (
+            <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+                Data Sources ({fetchedPairs.length} pairs)
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {fetchedPairs
+                  .sort((a, b) => a.exchange.localeCompare(b.exchange))
+                  .map((pair, i) => (
+                    <span key={i} className="whitespace-nowrap">
+                      <span style={{ color: EXCHANGE_COLORS[pair.exchange.replace('_perp', '')] || 'var(--text-secondary)' }}>
+                        {pair.exchange}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)' }}> {pair.symbol}</span>
+                    </span>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            <span>
+              Binance · Coinbase · Kraken · OKX · Bybit · KuCoin · Upbit · Bithumb · <span style={{ color: 'var(--text-secondary)' }}>UTC</span>
+            </span>
+            <span>
+              Built by{' '}
+              <a href="https://twitter.com/cptn3mox" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--text-secondary)' }}>@cptn3mox</a>
+              {' & '}
+              <a href="https://twitter.com/subinium" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--text-secondary)' }}>@subinium</a>
+            </span>
+          </div>
         </div>
       </footer>
     </main>

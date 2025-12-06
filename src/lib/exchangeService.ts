@@ -24,23 +24,34 @@ const commonConfig: ExchangeConfig = {
   },
 };
 
-const spotPairs: Record<string, (coin: string) => string> = {
-  binance: (coin) => `${coin}/USDT`,
-  coinbase: (coin) => `${coin}/USD`,
-  upbit: (coin) => `${coin}/KRW`,
-  bithumb: (coin) => `${coin}/KRW`,
-  okx: (coin) => `${coin}/USDT`,
-  kraken: (coin) => `${coin}/USDT`,
-  bybit: (coin) => `${coin}/USDT`,
-  kucoin: (coin) => `${coin}/USDT`,
+// Returns array of pairs for each exchange (some exchanges have multiple pairs)
+const spotPairs: Record<string, (coin: string) => string[]> = {
+  binance: (coin) => [`${coin}/USDT`, `${coin}/USDC`, `${coin}/FDUSD`],
+  coinbase: (coin) => [`${coin}/USD`, `${coin}/USDT`],
+  upbit: (coin) => [`${coin}/KRW`],
+  bithumb: (coin) => [`${coin}/KRW`],
+  okx: (coin) => [`${coin}/USDT`, `${coin}/USDC`],
+  kraken: (coin) => [`${coin}/USDT`, `${coin}/USD`],
+  bybit: (coin) => [`${coin}/USDT`, `${coin}/USDC`],
+  kucoin: (coin) => [`${coin}/USDT`],
 };
 
-const perpPairs: Record<string, (coin: string) => string> = {
-  binance: (coin) => `${coin}/USDT`,
-  okx: (coin) => `${coin}/USDT`,
-  bybit: (coin) => `${coin}/USDT`,
-  kucoin: (coin) => `${coin}/USDT`,
+const perpPairs: Record<string, (coin: string) => string[]> = {
+  binance: (coin) => [`${coin}/USDT`, `${coin}/USDC`],
+  okx: (coin) => [`${coin}/USDT`],
+  bybit: (coin) => [`${coin}/USDT`],
+  kucoin: (coin) => [`${coin}/USDT`],
 };
+
+// Track successfully fetched pairs
+export interface FetchedPair {
+  exchange: string;
+  symbol: string;
+  type: 'spot' | 'perp';
+  records: number;
+}
+
+let lastFetchedPairs: FetchedPair[] = [];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function createSpotExchanges(): Record<string, any> {
@@ -167,32 +178,61 @@ export async function fetchHistoricalData(
 ): Promise<VolumeData[]> {
   const spotExchanges = createSpotExchanges();
   const futuresExchanges = createFuturesExchanges();
+  const fetchedPairs: FetchedPair[] = [];
 
   // Run all exchanges in parallel for speed
-  const spotPromises = Object.entries(spotExchanges).map(([name, exchange]) => {
+  // Each exchange may have multiple pairs to fetch
+  const spotPromises: Promise<VolumeData[]>[] = [];
+  for (const [name, exchange] of Object.entries(spotExchanges)) {
     const symbolFn = spotPairs[name];
-    if (!symbolFn) return Promise.resolve([]);
-    return fetchExchangeData(exchange, name, symbolFn(coin), days, false);
-  });
+    if (!symbolFn) continue;
+    const symbols = symbolFn(coin);
+    for (const symbol of symbols) {
+      spotPromises.push(
+        fetchExchangeData(exchange, name, symbol, days, false).then((data) => {
+          if (data.length > 0) {
+            fetchedPairs.push({ exchange: name, symbol, type: 'spot', records: data.length });
+          }
+          return data;
+        })
+      );
+    }
+  }
 
-  const perpPromises = Object.entries(futuresExchanges).map(([name, exchange]) => {
+  const perpPromises: Promise<VolumeData[]>[] = [];
+  for (const [name, exchange] of Object.entries(futuresExchanges)) {
     const symbolFn = perpPairs[name];
-    if (!symbolFn) return Promise.resolve([]);
-    // For perps, try different symbol formats
-    const baseSymbol = symbolFn(coin);
-    return fetchExchangeData(exchange, name, baseSymbol, days, true);
-  });
+    if (!symbolFn) continue;
+    const symbols = symbolFn(coin);
+    for (const symbol of symbols) {
+      perpPromises.push(
+        fetchExchangeData(exchange, name, symbol, days, true).then((data) => {
+          if (data.length > 0) {
+            fetchedPairs.push({ exchange: `${name}_perp`, symbol, type: 'perp', records: data.length });
+          }
+          return data;
+        })
+      );
+    }
+  }
 
   const [spotResults, perpResults] = await Promise.all([
     Promise.all(spotPromises),
     Promise.all(perpPromises),
   ]);
 
+  // Store fetched pairs for API response
+  lastFetchedPairs = fetchedPairs;
+
   const allData = [...spotResults.flat(), ...perpResults.flat()];
 
   // Filter out today's data for accuracy
   const today = new Date().toISOString().split('T')[0];
   return allData.filter((d) => d.date !== today);
+}
+
+export function getLastFetchedPairs(): FetchedPair[] {
+  return lastFetchedPairs;
 }
 
 export async function getCurrentPrice(coin: string): Promise<number> {

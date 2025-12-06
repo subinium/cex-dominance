@@ -3,6 +3,7 @@ import {
   fetchHistoricalData,
   getCurrentPrice,
   calculateMarketShare,
+  getLastFetchedPairs,
 } from '@/lib/exchangeService';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,7 @@ export async function GET(request: NextRequest) {
       ticker,
       days,
       exchangeCount: [...new Set(historicalData.map((d) => d.exchange))].length,
+      fetchedPairs: getLastFetchedPairs(),
     });
   } catch (error) {
     console.error('API Error:', error);

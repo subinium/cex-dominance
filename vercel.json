@@ -1,5 +1,5 @@
 {
-  "regions": ["iad1"],
+  "regions": ["hkg1"],
   "functions": {
     "src/app/api/**/*.ts": {
       "maxDuration": 60
