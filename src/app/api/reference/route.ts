@@ -22,12 +22,16 @@ export async function GET() {
       fetchHistoricalData('ETH', 90),
     ]);
 
-    const btcWithShares = calculateMarketShare(btcData);
-    const ethWithShares = calculateMarketShare(ethData);
+    // Filter spot-only first, then calculate market share (same as main chart)
+    const btcSpotData = btcData.filter(d => d.type === 'spot');
+    const ethSpotData = ethData.filter(d => d.type === 'spot');
+
+    const btcWithShares = calculateMarketShare(btcSpotData);
+    const ethWithShares = calculateMarketShare(ethSpotData);
 
     // Process BTC data
     const btcByDate: Record<string, { price: number; krDom: number }> = {};
-    for (const item of btcWithShares.filter(d => d.type === 'spot')) {
+    for (const item of btcWithShares) {
       const baseEx = item.exchange.replace('_perp', '');
       if (!btcByDate[item.date]) {
         btcByDate[item.date] = { price: item.close, krDom: 0 };
@@ -39,7 +43,7 @@ export async function GET() {
 
     // Process ETH data
     const ethByDate: Record<string, { price: number; krDom: number }> = {};
-    for (const item of ethWithShares.filter(d => d.type === 'spot')) {
+    for (const item of ethWithShares) {
       const baseEx = item.exchange.replace('_perp', '');
       if (!ethByDate[item.date]) {
         ethByDate[item.date] = { price: item.close, krDom: 0 };

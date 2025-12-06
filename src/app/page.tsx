@@ -648,18 +648,20 @@ export default function Home() {
             <div className="flex items-center gap-2">
               {btcKrDom !== null && (
                 <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-                  <span className="text-[10px] font-semibold uppercase" style={{ color: 'var(--chart-btc)' }}>BTC</span>
+                  <span className="text-[10px] font-semibold uppercase" style={{ color: 'var(--chart-btc)' }}>BTC-KRD</span>
                   <span className="text-xs font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
                     {btcKrDom.toFixed(1)}%
                   </span>
+                  <InfoTooltip text="BTC Korean Dominance: Korean exchange (Upbit, Bithumb) spot volume as % of total BTC spot volume." />
                 </div>
               )}
               {ethKrDom !== null && (
                 <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-                  <span className="text-[10px] font-semibold uppercase" style={{ color: 'var(--chart-eth)' }}>ETH</span>
+                  <span className="text-[10px] font-semibold uppercase" style={{ color: 'var(--chart-eth)' }}>ETH-KRD</span>
                   <span className="text-xs font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
                     {ethKrDom.toFixed(1)}%
                   </span>
+                  <InfoTooltip text="ETH Korean Dominance: Korean exchange (Upbit, Bithumb) spot volume as % of total ETH spot volume." />
                 </div>
               )}
             </div>
