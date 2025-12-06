@@ -11,7 +11,6 @@ import {
   Line,
   Cell,
   ReferenceLine,
-  Legend,
   BarChart,
 } from 'recharts';
 import { VolumeData, KRW_EXCHANGES, EXCHANGE_COLORS } from '@/types';
@@ -69,27 +68,27 @@ const formatPrice = (price: number): string => {
 };
 
 const SunIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <circle cx="12" cy="12" r="5" />
     <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
   </svg>
 );
 
 const MoonIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
   </svg>
 );
 
 const ChevronIcon = ({ isOpen }: { isOpen: boolean }) => (
   <svg
-    width="16"
-    height="16"
+    width="14"
+    height="14"
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
     strokeWidth="2"
-    style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}
+    style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }}
   >
     <polyline points="6 9 12 15 18 9" />
   </svg>
@@ -108,17 +107,55 @@ const InfoTooltip = ({ text }: { text: string }) => {
       </span>
       {show && (
         <div
-          className="absolute z-50 bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg shadow-lg whitespace-nowrap"
+          className="absolute z-50 bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 text-[10px] shadow-lg whitespace-nowrap"
           style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
         >
           {text}
-          <div
-            className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0"
-            style={{ borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid var(--bg-tertiary)' }}
-          />
         </div>
       )}
     </span>
+  );
+};
+
+// Custom Legend Component
+const CustomLegend = ({
+  items,
+  hiddenSeries,
+  onToggle
+}: {
+  items: { name: string; color: string }[];
+  hiddenSeries: Set<string>;
+  onToggle: (name: string) => void;
+}) => {
+  return (
+    <div className="flex flex-wrap gap-1 mt-3 justify-center">
+      {items.map((item) => {
+        const isHidden = hiddenSeries.has(item.name);
+        return (
+          <button
+            key={item.name}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggle(item.name);
+            }}
+            className={`legend-item ${isHidden ? 'legend-item-hidden' : ''}`}
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            <div
+              className="legend-box"
+              style={{
+                backgroundColor: isHidden ? 'var(--text-muted)' : item.color,
+                border: isHidden ? '1px dashed var(--text-muted)' : 'none',
+              }}
+            />
+            <span style={{ textDecoration: isHidden ? 'line-through' : 'none' }}>
+              {item.name}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 };
 
@@ -252,7 +289,7 @@ export default function Home() {
     }
   };
 
-  const toggleSeries = (seriesName: string) => {
+  const toggleSeries = useCallback((seriesName: string) => {
     setHiddenSeries((prev) => {
       const next = new Set(prev);
       if (next.has(seriesName)) {
@@ -262,7 +299,7 @@ export default function Home() {
       }
       return next;
     });
-  };
+  }, []);
 
   const processedData = useMemo(() => {
     if (data.length === 0) return { chartData: [], stats: null, exchanges: [] };
@@ -362,46 +399,13 @@ export default function Home() {
     }));
   }, [refData]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const renderLegend = (props: any) => {
-    const { payload } = props;
-    if (!payload) return null;
-
-    return (
-      <div className="flex flex-wrap gap-3 mt-2 text-xs">
-        {payload.map((entry: { value: string; color?: string }, index: number) => {
-          const isHidden = hiddenSeries.has(entry.value);
-          return (
-            <button
-              key={index}
-              onClick={() => toggleSeries(entry.value)}
-              className="flex items-center gap-1.5 transition-all"
-              style={{ opacity: isHidden ? 0.4 : 1 }}
-            >
-              <div
-                className="w-3 h-3 rounded-sm"
-                style={{
-                  backgroundColor: isHidden ? 'var(--text-muted)' : entry.color,
-                  border: isHidden ? '1px dashed var(--text-muted)' : 'none',
-                }}
-              />
-              <span style={{ color: 'var(--text-secondary)', textDecoration: isHidden ? 'line-through' : 'none' }}>
-                {entry.value}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
-
   const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; name: string; color: string }>; label?: string }) => {
     if (!active || !payload?.length) return null;
     const d = chartData.find((d) => d.date === label || d.dateShort === label);
     if (!d) return null;
 
     return (
-      <div className="card p-3 text-xs font-mono shadow-lg border" style={{ borderColor: 'var(--border)' }}>
+      <div className="card p-3 text-[10px] font-mono shadow-lg border" style={{ borderColor: 'var(--border)' }}>
         <div style={{ color: 'var(--text-muted)' }} className="mb-2 font-semibold">{d.date}</div>
         <div className="space-y-1">
           {payload.map((p, i) => (
@@ -423,13 +427,19 @@ export default function Home() {
 
   return (
     <main className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
+      {/* Gradient Background */}
+      <div className="gradient-bg">
+        <div className="gradient-orb gradient-orb-1" />
+        <div className="gradient-orb gradient-orb-2" />
+        <div className="gradient-orb gradient-orb-3" />
+      </div>
+
       {/* Header */}
       <header className="border-b px-4 py-3" style={{ borderColor: 'var(--border)' }}>
         <div className="max-w-[1800px] mx-auto flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <h1 className="text-sm font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+            <h1 className="text-xs font-semibold tracking-wide uppercase" style={{ color: 'var(--text-primary)', letterSpacing: '0.1em' }}>
               CEX Dominance
-              <InfoTooltip text="Track Korean exchange volume dominance across major CEXs" />
             </h1>
 
             <div className="flex items-center gap-2">
@@ -439,25 +449,29 @@ export default function Home() {
                 onChange={(e) => setInputValue(e.target.value.toUpperCase())}
                 onKeyDown={handleKeyDown}
                 placeholder="TICKER"
-                className="w-20 bg-transparent border px-2 py-1 text-sm font-mono focus:outline-none focus:border-[var(--accent)] rounded"
+                className="w-20 bg-transparent border px-2 py-1.5 text-xs font-mono focus:outline-none"
                 style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
               />
               <button
                 onClick={handleSearch}
                 disabled={loading}
-                className="px-3 py-1 text-xs font-medium rounded transition-colors hover:opacity-80 disabled:opacity-50"
+                className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors hover:opacity-80 disabled:opacity-50"
                 style={{ background: 'var(--accent)', color: 'var(--bg-primary)' }}
               >
                 {loading ? '...' : 'Search'}
               </button>
 
               {/* D/W/M Selector */}
-              <div className="flex items-center gap-1 ml-2">
+              <div className="flex items-center gap-0 ml-2" style={{ border: '1px solid var(--border)' }}>
                 {(['D', 'W', 'M'] as TimeFrame[]).map((tf) => (
                   <button
                     key={tf}
                     onClick={() => handleTimeFrameChange(tf)}
-                    className={`time-btn ${timeFrame === tf ? 'time-btn-active' : ''}`}
+                    className="px-3 py-1.5 text-[10px] font-semibold uppercase transition-colors"
+                    style={{
+                      background: timeFrame === tf ? 'var(--bg-tertiary)' : 'transparent',
+                      color: timeFrame === tf ? 'var(--text-primary)' : 'var(--text-muted)',
+                    }}
                   >
                     {tf}
                   </button>
@@ -466,21 +480,19 @@ export default function Home() {
             </div>
 
             {/* KR Dominance indicators */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               {btcKrDom !== null && (
-                <div className="flex items-center gap-2 px-3 py-1 rounded" style={{ background: 'var(--bg-secondary)' }}>
-                  <span className="text-xs font-medium" style={{ color: 'var(--chart-btc)' }}>BTC</span>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>KR</span>
-                  <span className="text-sm font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                  <span className="text-[10px] font-semibold uppercase" style={{ color: 'var(--chart-btc)' }}>BTC</span>
+                  <span className="text-xs font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
                     {btcKrDom.toFixed(1)}%
                   </span>
                 </div>
               )}
               {ethKrDom !== null && (
-                <div className="flex items-center gap-2 px-3 py-1 rounded" style={{ background: 'var(--bg-secondary)' }}>
-                  <span className="text-xs font-medium" style={{ color: 'var(--chart-eth)' }}>ETH</span>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>KR</span>
-                  <span className="text-sm font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                  <span className="text-[10px] font-semibold uppercase" style={{ color: 'var(--chart-eth)' }}>ETH</span>
+                  <span className="text-xs font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
                     {ethKrDom.toFixed(1)}%
                   </span>
                 </div>
@@ -488,16 +500,16 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center" style={{ border: '1px solid var(--border)' }}>
               {(['spot', 'spot+perp'] as VolumeMode[]).map((mode) => (
                 <button
                   key={mode}
                   onClick={() => setVolumeMode(mode)}
-                  className="px-3 py-1.5 text-xs font-medium transition-colors"
+                  className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide transition-colors"
                   style={{
                     background: volumeMode === mode ? 'var(--accent)' : 'transparent',
-                    color: volumeMode === mode ? 'var(--bg-primary)' : 'var(--text-secondary)',
+                    color: volumeMode === mode ? 'var(--bg-primary)' : 'var(--text-muted)',
                   }}
                 >
                   {mode === 'spot' ? 'Spot' : 'Spot+Perp'}
@@ -506,8 +518,8 @@ export default function Home() {
             </div>
             <button
               onClick={toggleTheme}
-              className="p-2 rounded transition-colors hover:opacity-70"
-              style={{ color: 'var(--text-secondary)' }}
+              className="p-2 transition-colors hover:opacity-70"
+              style={{ color: 'var(--text-muted)' }}
             >
               {isDark ? <SunIcon /> : <MoonIcon />}
             </button>
@@ -515,28 +527,31 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="max-w-[1800px] mx-auto px-4 py-4">
+      <div className="max-w-[1800px] mx-auto px-4 py-5">
         {/* BTC/ETH Reference Chart with Tabs */}
         {!refLoading && refChartData.length > 0 && (
           <div className="card p-4 mb-5">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1">
+                <div className="flex items-center" style={{ border: '1px solid var(--border)' }}>
                   {(['BTC', 'ETH'] as RefTab[]).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setRefTab(tab)}
-                      className={`mini-tab ${refTab === tab ? 'mini-tab-active' : 'mini-tab-inactive'}`}
-                      style={{ color: refTab === tab ? (tab === 'BTC' ? 'var(--chart-btc)' : 'var(--chart-eth)') : undefined }}
+                      className="px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide transition-colors"
+                      style={{
+                        background: refTab === tab ? 'var(--bg-tertiary)' : 'transparent',
+                        color: refTab === tab ? (tab === 'BTC' ? 'var(--chart-btc)' : 'var(--chart-eth)') : 'var(--text-muted)',
+                      }}
                     >
                       {tab}
                     </button>
                   ))}
                 </div>
-                <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-                  Price & KR Dominance (90D)
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                  Price & KR Dominance · 90D
                 </span>
-                <InfoTooltip text="Shows price trend and Korean exchange dominance for the selected asset over 90 days" />
+                <InfoTooltip text="Price trend and Korean exchange dominance over 90 days" />
               </div>
             </div>
             <div className="h-44">
@@ -571,7 +586,7 @@ export default function Home() {
                       if (!active || !payload?.length) return null;
                       const d = refChartData.find(r => r.dateShort === label);
                       return (
-                        <div className="card p-3 text-xs font-mono shadow-lg border" style={{ borderColor: 'var(--border)' }}>
+                        <div className="card p-3 text-[10px] font-mono shadow-lg border" style={{ borderColor: 'var(--border)' }}>
                           <div style={{ color: 'var(--text-muted)' }} className="mb-2 font-semibold">{d?.date}</div>
                           <div className="space-y-1">
                             {payload.map((p, i) => (
@@ -590,26 +605,26 @@ export default function Home() {
                   {refTab === 'BTC' && (
                     <>
                       <Line yAxisId="price" type="linear" dataKey="btcPrice" name="BTC Price" stroke="var(--chart-btc)" strokeWidth={2} dot={false} />
-                      <Bar yAxisId="dom" dataKey="btcKrDom" name="BTC KR%" fill="var(--chart-btc)" fillOpacity={0.3} radius={[2, 2, 0, 0]} />
+                      <Bar yAxisId="dom" dataKey="btcKrDom" name="BTC KR%" fill="var(--chart-btc)" fillOpacity={0.25} radius={0} />
                     </>
                   )}
                   {refTab === 'ETH' && (
                     <>
                       <Line yAxisId="price" type="linear" dataKey="ethPrice" name="ETH Price" stroke="var(--chart-eth)" strokeWidth={2} dot={false} />
-                      <Bar yAxisId="dom" dataKey="ethKrDom" name="ETH KR%" fill="var(--chart-eth)" fillOpacity={0.3} radius={[2, 2, 0, 0]} />
+                      <Bar yAxisId="dom" dataKey="ethKrDom" name="ETH KR%" fill="var(--chart-eth)" fillOpacity={0.25} radius={0} />
                     </>
                   )}
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
-            <div className="flex items-center justify-center gap-6 mt-2 text-xs">
+            <div className="flex items-center justify-center gap-6 mt-3 text-[10px]">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-0.5" style={{ background: refTab === 'BTC' ? 'var(--chart-btc)' : 'var(--chart-eth)' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>{refTab} Price</span>
+                <span style={{ color: 'var(--text-muted)' }}>{refTab} Price</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-sm" style={{ background: refTab === 'BTC' ? 'var(--chart-btc)' : 'var(--chart-eth)', opacity: 0.3 }} />
-                <span style={{ color: 'var(--text-secondary)' }}>{refTab} KR Dominance</span>
+                <div className="w-3 h-3" style={{ background: refTab === 'BTC' ? 'var(--chart-btc)' : 'var(--chart-eth)', opacity: 0.25 }} />
+                <span style={{ color: 'var(--text-muted)' }}>{refTab} KR Dominance</span>
               </div>
             </div>
           </div>
@@ -619,25 +634,25 @@ export default function Home() {
         {loading && (
           <div className="flex flex-col items-center justify-center py-32">
             <div className="w-64 space-y-4">
-              <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
+              <div className="relative h-1 overflow-hidden" style={{ background: 'var(--border)' }}>
                 <div
-                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-300 ease-out"
+                  className="absolute inset-y-0 left-0 transition-all duration-300 ease-out"
                   style={{ width: `${loadingProgress}%`, background: 'var(--accent)' }}
                 />
               </div>
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center justify-between text-[10px]">
                 <span style={{ color: 'var(--text-secondary)' }}>{loadingMessage}...</span>
                 <span className="font-mono" style={{ color: 'var(--text-muted)' }}>{Math.round(loadingProgress)}%</span>
               </div>
               <div className="text-center">
-                <span className="text-lg font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{ticker}</span>
-                <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{days}D</span>
+                <span className="text-base font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{ticker}</span>
+                <span className="text-[10px] ml-2" style={{ color: 'var(--text-muted)' }}>{days}D</span>
               </div>
               <div className="flex justify-center gap-1.5 pt-2">
                 {['binance', 'coinbase', 'okx', 'bybit', 'upbit', 'bithumb'].map((ex, i) => (
                   <div
                     key={ex}
-                    className="w-2.5 h-2.5 rounded-full animate-pulse"
+                    className="w-2 h-2 animate-pulse"
                     style={{
                       background: EXCHANGE_COLORS[ex],
                       animationDelay: `${i * 150}ms`,
@@ -653,54 +668,89 @@ export default function Home() {
         {/* Error */}
         {error && (
           <div className="py-32 text-center">
-            <p className="text-sm font-medium" style={{ color: 'var(--red)' }}>{error}</p>
+            <p className="text-xs font-medium" style={{ color: 'var(--red)' }}>{error}</p>
           </div>
         )}
 
         {/* Content */}
         {!loading && !error && stats && (
           <>
-            {/* Stats Row */}
-            <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-5">
-              {[
-                { label: 'Price', value: formatPrice(currentPrice || stats.latestPrice), change: stats.priceChange, showChange: true, info: 'Current market price from major exchanges' },
-                { label: 'KR Dom', value: `${stats.latestKr.toFixed(2)}%`, change: stats.krTrend, showChange: true, info: 'Korean exchange share of total trading volume' },
-                { label: 'Avg KR', value: `${stats.avgKr.toFixed(2)}%`, info: 'Average KR dominance over selected period' },
-                { label: 'High/Low', value: `${stats.maxKr.toFixed(1)}% / ${stats.minKr.toFixed(1)}%`, info: 'Highest and lowest KR dominance in period' },
-                { label: 'Total Vol', value: `$${formatNumber(stats.totalVol, 1)}`, info: 'Cumulative trading volume over period' },
-                { label: 'Avg/Day', value: `$${formatNumber(stats.avgDailyVol, 1)}`, info: 'Average daily trading volume' },
-              ].map((stat, i) => (
-                <div key={i} className="card p-3">
-                  <div className="text-[10px] uppercase tracking-wider mb-1 flex items-center" style={{ color: 'var(--text-muted)' }}>
-                    {stat.label}
-                    {stat.info && <InfoTooltip text={stat.info} />}
-                  </div>
-                  <div className="text-base font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stat.value}</div>
-                  {stat.showChange && (
-                    <div className="text-xs font-mono" style={{ color: stat.change >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {stat.change >= 0 ? '+' : ''}{stat.change.toFixed(2)}%
+            {/* Main Section: Stats + Main Chart */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+              {/* Stats Column */}
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Price', value: formatPrice(currentPrice || stats.latestPrice), change: stats.priceChange, showChange: true, info: 'Current market price' },
+                  { label: 'KR Dom', value: `${stats.latestKr.toFixed(2)}%`, change: stats.krTrend, showChange: true, info: 'Korean exchange share of volume' },
+                  { label: 'Avg KR', value: `${stats.avgKr.toFixed(2)}%`, info: 'Average KR dominance over period' },
+                  { label: 'High/Low', value: `${stats.maxKr.toFixed(1)}/${stats.minKr.toFixed(1)}%`, info: 'KR dominance range' },
+                  { label: 'Total Vol', value: `$${formatNumber(stats.totalVol, 1)}`, info: 'Cumulative volume' },
+                  { label: 'Avg/Day', value: `$${formatNumber(stats.avgDailyVol, 1)}`, info: 'Average daily volume' },
+                ].map((stat, i) => (
+                  <div key={i} className="card p-4">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider mb-2 flex items-center" style={{ color: 'var(--text-muted)' }}>
+                      {stat.label}
+                      {stat.info && <InfoTooltip text={stat.info} />}
                     </div>
-                  )}
+                    <div className="text-base font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{stat.value}</div>
+                    {stat.showChange && (
+                      <div className="text-[10px] font-mono mt-1" style={{ color: stat.change >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                        {stat.change >= 0 ? '+' : ''}{stat.change.toFixed(2)}%
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Main Chart: KR Dominance vs Price */}
+              <div className="lg:col-span-2 card p-4">
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-4 flex items-center" style={{ color: 'var(--text-muted)' }}>
+                  KR Dominance vs Price
+                  <InfoTooltip text="Compare KR dominance (bars) with price movement (line)" />
                 </div>
-              ))}
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
+                      <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v.toFixed(0)}%`} domain={['auto', 'auto']} />
+                      <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => formatPrice(v)} domain={['auto', 'auto']} />
+                      <Tooltip content={<CustomTooltip />} />
+                      {!hiddenSeries.has('KR %') && (
+                        <Bar yAxisId="left" dataKey="krDominance" name="KR %" fill="var(--chart-kr)" fillOpacity={0.8} radius={0} />
+                      )}
+                      {!hiddenSeries.has('Price') && (
+                        <Line yAxisId="right" type="linear" dataKey="price" name="Price" stroke="var(--chart-price)" strokeWidth={2.5} dot={false} />
+                      )}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <CustomLegend
+                  items={[
+                    { name: 'KR %', color: 'var(--chart-kr)' },
+                    { name: 'Price', color: 'var(--chart-price)' },
+                  ]}
+                  hiddenSeries={hiddenSeries}
+                  onToggle={toggleSeries}
+                />
+              </div>
             </div>
 
             {/* Charts Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
               {/* KR Dominance Change */}
               <div className="card p-4">
-                <div className="text-[10px] uppercase tracking-wider mb-3 flex items-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-4 flex items-center" style={{ color: 'var(--text-muted)' }}>
                   KR Dominance Daily Change
-                  <InfoTooltip text="Day-over-day change in Korean exchange dominance. Green = increased, Red = decreased" />
+                  <InfoTooltip text="Day-over-day change. Green = increased, Red = decreased" />
                 </div>
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} />
+                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} />
                       <Tooltip content={<CustomTooltip />} />
                       <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
-                      <Bar dataKey="krChange" name="KR Change" radius={[2, 2, 0, 0]}>
+                      <Bar dataKey="krChange" name="KR Change" radius={0}>
                         {chartData.map((entry, index) => (
                           <Cell key={index} fill={Number(entry.krChange) >= 0 ? 'var(--green)' : 'var(--red)'} />
                         ))}
@@ -710,95 +760,84 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* KR Dominance vs Price */}
-              <div className="card p-4">
-                <div className="text-[10px] uppercase tracking-wider mb-3 flex items-center" style={{ color: 'var(--text-muted)' }}>
-                  KR Dominance vs Price
-                  <InfoTooltip text="Compare Korean dominance (bars) with price movement (line)" />
-                </div>
-                <div className="h-56">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                      <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v.toFixed(0)}%`} domain={['auto', 'auto']} />
-                      <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => formatPrice(v)} domain={['auto', 'auto']} />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Legend content={renderLegend} />
-                      {!hiddenSeries.has('KR %') && (
-                        <Bar yAxisId="left" dataKey="krDominance" name="KR %" fill="var(--chart-kr)" fillOpacity={0.85} radius={[2, 2, 0, 0]} />
-                      )}
-                      {!hiddenSeries.has('Price') && (
-                        <Line yAxisId="right" type="linear" dataKey="price" name="Price" stroke="var(--chart-price)" strokeWidth={2.5} dot={{ r: 3, fill: 'var(--chart-price)' }} />
-                      )}
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
               {/* KR vs Global Share */}
               <div className="card p-4">
-                <div className="text-[10px] uppercase tracking-wider mb-3 flex items-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-4 flex items-center" style={{ color: 'var(--text-muted)' }}>
                   KR vs Global Share
-                  <InfoTooltip text="Stacked view showing Korean vs Global exchange market share (100% total)" />
+                  <InfoTooltip text="Korean vs Global exchange market share (100% total)" />
                 </div>
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
                       <Tooltip content={<CustomTooltip />} />
-                      <Legend content={renderLegend} />
                       {!hiddenSeries.has('KR') && (
-                        <Bar dataKey="krDominance" name="KR" stackId="1" fill="var(--chart-kr)" />
+                        <Bar dataKey="krDominance" name="KR" stackId="1" fill="var(--chart-kr)" radius={0} />
                       )}
                       {!hiddenSeries.has('Global') && (
-                        <Bar dataKey="nonKrDominance" name="Global" stackId="1" fill="var(--chart-global)" />
+                        <Bar dataKey="nonKrDominance" name="Global" stackId="1" fill="var(--chart-global)" radius={0} />
                       )}
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+                <CustomLegend
+                  items={[
+                    { name: 'KR', color: 'var(--chart-kr)' },
+                    { name: 'Global', color: 'var(--chart-global)' },
+                  ]}
+                  hiddenSeries={hiddenSeries}
+                  onToggle={toggleSeries}
+                />
               </div>
 
               {/* Volume KR vs Global */}
               <div className="card p-4">
-                <div className="text-[10px] uppercase tracking-wider mb-3 flex items-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-4 flex items-center" style={{ color: 'var(--text-muted)' }}>
                   Volume: KR vs Global
-                  <InfoTooltip text="Absolute trading volume in USD split by Korean and Global exchanges" />
+                  <InfoTooltip text="Trading volume in USD by region" />
                 </div>
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `$${formatNumber(v, 0)}`} />
+                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `$${formatNumber(v, 0)}`} />
                       <Tooltip content={<CustomTooltip />} />
-                      <Legend content={renderLegend} />
                       {!hiddenSeries.has('KR Vol') && (
-                        <Bar dataKey="krVolume" name="KR Vol" stackId="vol" fill="var(--chart-kr)" />
+                        <Bar dataKey="krVolume" name="KR Vol" stackId="vol" fill="var(--chart-kr)" radius={0} />
                       )}
                       {!hiddenSeries.has('Global Vol') && (
-                        <Bar dataKey="nonKrVolume" name="Global Vol" stackId="vol" fill="var(--chart-global)" />
+                        <Bar dataKey="nonKrVolume" name="Global Vol" stackId="vol" fill="var(--chart-global)" radius={0} />
                       )}
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+                <CustomLegend
+                  items={[
+                    { name: 'KR Vol', color: 'var(--chart-kr)' },
+                    { name: 'Global Vol', color: 'var(--chart-global)' },
+                  ]}
+                  hiddenSeries={hiddenSeries}
+                  onToggle={toggleSeries}
+                />
               </div>
 
               {/* Exchange Breakdown */}
               <div className="card p-4">
-                <div className="text-[10px] uppercase tracking-wider mb-3 flex items-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-4 flex items-center" style={{ color: 'var(--text-muted)' }}>
                   Exchange Breakdown
-                  <InfoTooltip text="Individual exchange market share. Click legend items to toggle visibility" />
+                  <InfoTooltip text="Individual exchange market share. Click legend to toggle" />
                 </div>
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
                       <Tooltip
                         content={({ active, payload, label }) => {
                           if (!active || !payload?.length) return null;
                           return (
-                            <div className="card p-3 text-xs font-mono shadow-lg max-h-64 overflow-auto border" style={{ borderColor: 'var(--border)' }}>
+                            <div className="card p-3 text-[10px] font-mono shadow-lg max-h-64 overflow-auto border" style={{ borderColor: 'var(--border)' }}>
                               <div style={{ color: 'var(--text-muted)' }} className="mb-2 font-semibold">{label}</div>
                               <div className="space-y-1">
                                 {payload.filter(p => !hiddenSeries.has(String(p.name) || '')).reverse().map((p, i) => (
@@ -812,38 +851,49 @@ export default function Home() {
                           );
                         }}
                       />
-                      <Legend content={renderLegend} />
                       {exchanges.filter(ex => !hiddenSeries.has(ex)).map((ex) => (
-                        <Bar key={ex} dataKey={ex} name={ex} stackId="1" fill={EXCHANGE_COLORS[ex] || '#888'} />
+                        <Bar key={ex} dataKey={ex} name={ex} stackId="1" fill={EXCHANGE_COLORS[ex] || '#888'} radius={0} />
                       ))}
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+                <CustomLegend
+                  items={exchanges.map(ex => ({ name: ex, color: EXCHANGE_COLORS[ex] || '#888' }))}
+                  hiddenSeries={hiddenSeries}
+                  onToggle={toggleSeries}
+                />
               </div>
 
               {/* Price Change vs KR Change */}
               <div className="card p-4">
-                <div className="text-[10px] uppercase tracking-wider mb-3 flex items-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-4 flex items-center" style={{ color: 'var(--text-muted)' }}>
                   Price Change vs KR Change
-                  <InfoTooltip text="Correlation between price changes and Korean dominance changes" />
+                  <InfoTooltip text="Correlation between price and KR dominance changes" />
                 </div>
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} />
+                      <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} />
                       <Tooltip content={<CustomTooltip />} />
-                      <Legend content={renderLegend} />
                       <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
                       {!hiddenSeries.has('KR Chg') && (
-                        <Bar dataKey="krChange" name="KR Chg" fill="var(--chart-kr)" fillOpacity={0.7} radius={[2, 2, 0, 0]} />
+                        <Bar dataKey="krChange" name="KR Chg" fill="var(--chart-kr)" fillOpacity={0.7} radius={0} />
                       )}
                       {!hiddenSeries.has('Price Chg') && (
-                        <Line type="linear" dataKey="priceChange" name="Price Chg" stroke="var(--chart-price)" strokeWidth={2.5} dot={{ r: 3, fill: 'var(--chart-price)' }} />
+                        <Line type="linear" dataKey="priceChange" name="Price Chg" stroke="var(--chart-price)" strokeWidth={2} dot={false} />
                       )}
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
+                <CustomLegend
+                  items={[
+                    { name: 'KR Chg', color: 'var(--chart-kr)' },
+                    { name: 'Price Chg', color: 'var(--chart-price)' },
+                  ]}
+                  hiddenSeries={hiddenSeries}
+                  onToggle={toggleSeries}
+                />
               </div>
             </div>
 
@@ -855,8 +905,8 @@ export default function Home() {
                 style={{ borderBottom: rawDataOpen ? '1px solid var(--border)' : 'none' }}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-                    Raw Volume Data (USD)
+                  <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    Raw Volume Data
                   </span>
                   <InfoTooltip text="Detailed daily volume breakdown by exchange" />
                 </div>
@@ -865,26 +915,26 @@ export default function Home() {
 
               {rawDataOpen && (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
+                  <table className="w-full text-[10px]">
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                        <th className="text-left py-2.5 px-4 font-medium sticky left-0" style={{ color: 'var(--text-muted)', background: 'var(--bg-secondary)' }}>Date</th>
+                        <th className="text-left py-3 px-4 font-semibold uppercase tracking-wider sticky left-0" style={{ color: 'var(--text-muted)', background: 'var(--bg-secondary)' }}>Date</th>
                         {exchanges.map((ex) => (
-                          <th key={ex} className="text-right py-2.5 px-3 font-medium capitalize" style={{ color: EXCHANGE_COLORS[ex] }}>{ex}</th>
+                          <th key={ex} className="text-right py-3 px-3 font-semibold uppercase tracking-wider" style={{ color: EXCHANGE_COLORS[ex] }}>{ex}</th>
                         ))}
-                        <th className="text-right py-2.5 px-4 font-medium" style={{ color: 'var(--green)' }}>Total</th>
+                        <th className="text-right py-3 px-4 font-semibold uppercase tracking-wider" style={{ color: 'var(--green)' }}>Total</th>
                       </tr>
                     </thead>
                     <tbody className="font-mono">
                       {[...chartData].reverse().slice(0, 30).map((row, i) => (
                         <tr key={row.date} style={{ background: i % 2 === 0 ? 'var(--bg-tertiary)' : 'transparent' }}>
-                          <td className="py-2 px-4 sticky left-0" style={{ color: 'var(--text-secondary)', background: i % 2 === 0 ? 'var(--bg-tertiary)' : 'var(--bg-secondary)' }}>{row.date}</td>
+                          <td className="py-2.5 px-4 sticky left-0" style={{ color: 'var(--text-secondary)', background: i % 2 === 0 ? 'var(--bg-tertiary)' : 'var(--bg-secondary)' }}>{row.date}</td>
                           {exchanges.map((ex) => (
-                            <td key={ex} className="text-right py-2 px-3" style={{ color: 'var(--text-primary)' }}>
+                            <td key={ex} className="text-right py-2.5 px-3" style={{ color: 'var(--text-primary)' }}>
                               {row[`${ex}Vol`] ? `$${formatNumber(Number(row[`${ex}Vol`]), 1)}` : '-'}
                             </td>
                           ))}
-                          <td className="text-right py-2 px-4 font-semibold" style={{ color: 'var(--green)' }}>${formatNumber(Number(row.totalVolume), 1)}</td>
+                          <td className="text-right py-2.5 px-4 font-semibold" style={{ color: 'var(--green)' }}>${formatNumber(Number(row.totalVolume), 1)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -897,7 +947,7 @@ export default function Home() {
 
         {/* Empty state */}
         {!loading && !error && !stats && (
-          <div className="py-32 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+          <div className="py-32 text-center text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
             Enter a ticker and press Enter to view dominance data
           </div>
         )}
@@ -905,17 +955,14 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t mt-8 px-4 py-4" style={{ borderColor: 'var(--border)' }}>
-        <div className="max-w-[1800px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-          <span>Data: Binance, Coinbase, Kraken, OKX, Bybit, KuCoin, Upbit, Bithumb</span>
-          <div className="flex items-center gap-4">
-            <span>Click legend to toggle</span>
-            <span>
-              Built by{' '}
-              <a href="https://twitter.com/cptn3mox" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--accent)' }}>@cptn3mox</a>
-              {' & '}
-              <a href="https://twitter.com/subinium" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--accent)' }}>@subinium</a>
-            </span>
-          </div>
+        <div className="max-w-[1800px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          <span>Binance · Coinbase · Kraken · OKX · Bybit · KuCoin · Upbit · Bithumb · <span style={{ color: 'var(--text-secondary)' }}>UTC</span></span>
+          <span>
+            Built by{' '}
+            <a href="https://twitter.com/cptn3mox" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--text-secondary)' }}>@cptn3mox</a>
+            {' & '}
+            <a href="https://twitter.com/subinium" target="_blank" rel="noopener noreferrer" className="hover:underline" style={{ color: 'var(--text-secondary)' }}>@subinium</a>
+          </span>
         </div>
       </footer>
     </main>

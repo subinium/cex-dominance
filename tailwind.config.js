@@ -8,8 +8,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['var(--font-geist-sans)'],
-        mono: ['var(--font-geist-mono)'],
+        sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'monospace'],
       },
       colors: {
         bg: {
@@ -23,16 +23,6 @@ module.exports = {
         },
         border: 'var(--border)',
         accent: 'var(--accent)',
-        exchange: {
-          binance: '#F0B90B',
-          coinbase: '#0052FF',
-          upbit: '#0A4CFF',
-          bithumb: '#F37321',
-          kraken: '#5741D9',
-          okx: '#FFFFFF',
-          bybit: '#F7A600',
-          kucoin: '#23AF91',
-        },
       },
     },
   },
