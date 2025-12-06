@@ -12,6 +12,7 @@ import {
   Cell,
   ReferenceLine,
   BarChart,
+  CartesianGrid,
 } from 'recharts';
 import { VolumeData, KRW_EXCHANGES, EXCHANGE_COLORS } from '@/types';
 
@@ -114,6 +115,98 @@ const InfoTooltip = ({ text }: { text: string }) => {
         </div>
       )}
     </span>
+  );
+};
+
+// Period Dropdown Component
+const PERIOD_OPTIONS = [
+  { value: 7, label: '7D' },
+  { value: 14, label: '14D' },
+  { value: 30, label: '30D' },
+  { value: 60, label: '60D' },
+  { value: 90, label: '90D' },
+  { value: 180, label: '180D' },
+  { value: 365, label: '1Y' },
+];
+
+const PeriodDropdown = ({
+  value,
+  onChange
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const currentOption = PERIOD_OPTIONS.find(opt => opt.value === value) || PERIOD_OPTIONS[2];
+
+  return (
+    <div className="relative ml-2">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-mono font-semibold uppercase transition-colors"
+        style={{
+          background: 'transparent',
+          border: '1px solid var(--border)',
+          color: 'var(--text-primary)'
+        }}
+      >
+        {currentOption.label}
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {isOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setIsOpen(false)}
+          />
+          <div
+            className="absolute top-full left-0 mt-1 z-50 min-w-full"
+            style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              backdropFilter: 'blur(12px)'
+            }}
+          >
+            {PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+                className="block w-full text-left px-3 py-2 text-[10px] font-mono uppercase transition-colors"
+                style={{
+                  background: value === option.value ? 'var(--bg-tertiary)' : 'transparent',
+                  color: value === option.value ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  if (value !== option.value) {
+                    e.currentTarget.style.background = 'var(--bg-tertiary)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (value !== option.value) {
+                    e.currentTarget.style.background = 'transparent';
+                  }
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 };
 
@@ -477,6 +570,17 @@ export default function Home() {
                   </button>
                 ))}
               </div>
+
+              {/* Period Dropdown - Custom UI */}
+              <PeriodDropdown
+                value={days}
+                onChange={(val) => {
+                  setDays(val);
+                  if (val <= 30) setTimeFrame('D');
+                  else if (val <= 90) setTimeFrame('W');
+                  else setTimeFrame('M');
+                }}
+              />
             </div>
 
             {/* KR Dominance indicators */}
@@ -557,6 +661,7 @@ export default function Home() {
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={refChartData} margin={{ top: 5, right: 50, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} vertical={false} />
                   <XAxis
                     dataKey="dateShort"
                     axisLine={false}
@@ -711,6 +816,7 @@ export default function Home() {
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} vertical={false} />
                       <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
                       <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v.toFixed(0)}%`} domain={['auto', 'auto']} />
                       <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={(v) => formatPrice(v)} domain={['auto', 'auto']} />
@@ -746,6 +852,7 @@ export default function Home() {
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} vertical={false} />
                       <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} />
                       <Tooltip content={<CustomTooltip />} />
@@ -769,6 +876,7 @@ export default function Home() {
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} vertical={false} />
                       <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
                       <Tooltip content={<CustomTooltip />} />
@@ -800,6 +908,7 @@ export default function Home() {
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} vertical={false} />
                       <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `$${formatNumber(v, 0)}`} />
                       <Tooltip content={<CustomTooltip />} />
@@ -831,6 +940,7 @@ export default function Home() {
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} vertical={false} />
                       <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
                       <Tooltip
@@ -873,6 +983,7 @@ export default function Home() {
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} vertical={false} />
                       <XAxis dataKey="dateShort" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} />
                       <Tooltip content={<CustomTooltip />} />

@@ -148,7 +148,14 @@ async function fetchExchangeData(
 
     console.log(`✅ ${exchangeName}${isPerp ? ' perp' : ''}: ${ohlcv.length} records`);
   } catch (error) {
-    console.error(`❌ ${exchangeName}${isPerp ? ' perp' : ''} failed:`, error);
+    // Check for geo-blocking or access denied errors
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('403') || errorMessage.includes('blocked') ||
+        errorMessage.includes('Forbidden') || errorMessage.includes('access denied')) {
+      console.warn(`⚠️ ${exchangeName}${isPerp ? ' perp' : ''}: Geo-blocked or access denied (common on serverless platforms)`);
+    } else {
+      console.error(`❌ ${exchangeName}${isPerp ? ' perp' : ''} failed:`, errorMessage);
+    }
   }
 
   return results;
